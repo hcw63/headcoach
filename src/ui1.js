@@ -98,6 +98,7 @@ var UI = (function () {
     h += '<h3 style="margin:16px 0 8px">Franchise QB</h3><div class="row">' + ovr(qb.ovr) + '<b>' + nm(qb) + '</b><span class="mut">Age ' + qb.age + ' · ' + fmtM(qb.sal) + '</span></div>';
     h += '<h3 style="margin:16px 0 8px">Top Players</h3>' + ps.slice(0, 5).map(function (p) { return '<div class="row" style="margin-bottom:6px">' + ovr(p.ovr) + '<span class="tag">' + p.pos + '</span><span>' + nm(p) + '</span></div>'; }).join('');
     h += '<h3 style="margin:16px 0 8px">Young Talent</h3>' + young.map(function (p) { return '<div class="row" style="margin-bottom:6px">' + ovr(p.ovr) + '<span class="tag">' + p.pos + '</span><span>' + nm(p) + '</span><span class="mut">POT ' + HC.potGrade(p.pot) + '</span></div>'; }).join('');
+    h += '<h3 style="margin:18px 0 8px">Start At</h3><div class="seg big" style="display:flex">' + [['camp', '🏕️ Training Camp (' + HC.dateLabel(HC.campDate(G, 0)) + ')'], ['wk1', '🏈 Week 1']].map(function (o) { var on = (S.startCamp !== false) === (o[0] === 'camp'); return '<button style="flex:1" class="' + (on ? 'on' : '') + '" data-act="startmode" data-arg="' + o[0] + '">' + o[1] + '</button>'; }).join('') + '</div><div class="dim" style="font-size:11.5px;margin-top:6px">' + (S.startCamp !== false ? 'Run a 90-man camp day by day, play 3 preseason games, then cut down to 53.' : 'Skip camp and start at the season opener with the current 53.') + '</div>';
     h += '<h3 style="margin:18px 0 8px">Your Name, Coach</h3><input class="inp" id="coachName" placeholder="e.g. Howard Wentworth" value="' + esc(S.coach) + '" maxlength="30">';
     h += '<button class="btn pri big" style="width:100%;margin-top:14px" data-act="start" data-arg="' + ab + '">Take the ' + esc(t.name) + ' Job →</button></div>';
     return h;
@@ -114,6 +115,7 @@ var UI = (function () {
     if (G.phase === 'regular') return G.season + ' Regular Season · Week ' + G.week;
     if (G.phase === 'playoffs') return G.season + ' Playoffs · ' + HC.roundName(G.playoffs.round);
     if (G.phase === 'draft') return G.draft.year + ' NFL Draft · Round ' + G.draft.order[Math.min(G.draft.cur, G.draft.order.length - 1)].r;
+    if (G.phase === 'camp' && G.camp) { var cd = G.camp.days[G.camp.day]; return G.season + ' Training Camp · Day ' + (G.camp.day + 1) + ' · ' + HC.dateLabel(HC.campDate(G, G.camp.day)) + (cd.t === 'game' ? ' · Preseason ' + (HC.PS_DAYS.indexOf(G.camp.day) + 1) : cd.t === 'cut' ? ' · Cutdown' : ''); }
     if (G.phase === 'freeagency' && G.fa) return (G.season + 1) + ' Free Agency · Day ' + G.fa.day + ' of ' + G.fa.days;
     return G.season + ' Offseason';
   }
@@ -127,8 +129,8 @@ var UI = (function () {
       '<button class="btn sm" data-act="save">💾 Save</button></div><nav class="nav">';
     NAV.forEach(function (n) {
       if (n[0] === 'sec') { h += '<div class="sec">' + n[1] + '</div>'; return; }
-      var dot = (n[0] === 'dash' && G.user.pendingEvent) || (n[0] === 'draft' && G.phase === 'draft');
-      var label = n[0] === 'dash' && G.phase === 'playoffs' ? 'Playoffs' : n[0] === 'dash' && G.phase === 'draft' ? 'Draft Room' : n[0] === 'dash' && G.phase === 'offseason' ? 'Offseason' : n[2];
+      var dot = (n[0] === 'dash' && G.user.pendingEvent) || (n[0] === 'draft' && G.phase === 'draft') || (n[0] === 'dash' && G.phase === 'camp' && G.camp && (G.camp.days[G.camp.day].t === 'game' || G.camp.days[G.camp.day].t === 'cut'));
+      var label = n[0] === 'dash' && G.phase === 'camp' ? 'Training Camp' : n[0] === 'dash' && G.phase === 'playoffs' ? 'Playoffs' : n[0] === 'dash' && G.phase === 'draft' ? 'Draft Room' : n[0] === 'dash' && G.phase === 'offseason' ? 'Offseason' : n[2];
       h += '<a class="' + (S.screen === n[0] ? 'on' : '') + '" data-act="nav" data-arg="' + n[0] + '"><span class="ic">' + n[1] + '</span>' + label + (dot ? '<span class="dot"></span>' : '') + '</a>';
     });
     h += '</nav><main class="main">' + content + '</main></div>';

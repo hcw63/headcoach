@@ -55,7 +55,7 @@ var HC = (function () {
   E.wovr = wovr;
 
   // ---------- League creation ----------
-  E.newLeague = function (D, userAb, coachName) {
+  E.newLeague = function (D, userAb, coachName, opts) {
     var G = { v: 1, season: D.season, cap: D.cap, phase: 'regular', week: 1, teams: {}, players: {}, order: [], news: [], sched: [], user: null, playoffs: null, draft: null, history: [] };
     D.teams.forEach(function (t) {
       G.teams[t[0]] = { ab: t[0], city: t[1], name: t[2], c1: t[3], c2: t[4], div: t[5], conf: t[5].slice(0, 3), realHC: t[6], w: 0, l: 0, t: 0, pf: 0, pa: 0, chem: ri(52, 68), dead: 0, depth: {}, streak: 0, divW: 0 };
@@ -75,10 +75,10 @@ var HC = (function () {
     E.migrate(G);
     E.genDraftClass(G);
     addNews(G, 'Welcome, Coach ' + G.user.coach + '! You take over the ' + t.city + ' ' + t.name + (t.realHC ? ' (replacing ' + t.realHC + ')' : '') + '.', 'big');
-    E.newWeeklyEvent(G);
+    if (opts && opts.camp) { G.user.daily = 1; E.startCamp(G); } else E.newWeeklyEvent(G);
     return G;
   };
-  function addNews(G, s, tag) { G.news.unshift({ w: G.phase === 'regular' ? 'Wk ' + G.week : G.phase === 'playoffs' ? 'Playoffs' : G.phase === 'draft' ? 'Draft' : 'Offseason', s: s, tag: tag || '' }); if (G.news.length > 80) G.news.length = 80; }
+  function addNews(G, s, tag) { G.news.unshift({ w: G.phase === 'regular' ? 'Wk ' + G.week : G.phase === 'playoffs' ? 'Playoffs' : G.phase === 'draft' ? 'Draft' : G.phase === 'camp' ? 'Camp' : 'Offseason', s: s, tag: tag || '' }); if (G.news.length > 80) G.news.length = 80; }
   E.addNews = addNews;
 
   // ---------- Roster helpers ----------
@@ -100,12 +100,14 @@ var HC = (function () {
   }
   E.syncDepth = syncDepth;
   var FILL = { OT: ['G', 'C'], G: ['C', 'OT'], C: ['G', 'OT'], EDGE: ['DT', 'LB'], DT: ['EDGE'], LB: ['S', 'EDGE'], CB: ['S'], S: ['CB', 'LB'], WR: ['TE', 'RB'], TE: ['WR', 'OT'], RB: ['WR'], QB: [], K: ['P'], P: ['K'] };
-  function lineup(G, ab) {
+  function lineup(G, ab, lvl) {
     var t = G.teams[ab], L = {}, used = {}, pos;
     syncDepth(G, ab);
     for (pos in LINEUP) {
       var ids = (t.depth[pos] || []).filter(function (id) { return !G.players[id].inj; });
-      L[pos] = ids.slice(0, LINEUP[pos]).map(function (id) { used[id] = 1; return G.players[id]; });
+      // lvl 1 / 2 = second / third string (preseason): skip the players ahead of them on the depth chart
+      var s0 = lvl ? Math.max(0, Math.min(LINEUP[pos] * lvl, ids.length - LINEUP[pos])) : 0;
+      L[pos] = ids.slice(s0, s0 + LINEUP[pos]).map(function (id) { used[id] = 1; return G.players[id]; });
     }
     for (pos in LINEUP) {
       var guard = 0;
@@ -125,8 +127,8 @@ var HC = (function () {
   function avg(a) { return a.length ? a.reduce(function (s, x) { return s + x; }, 0) / a.length : 50; }
   E.avg = avg;
   function A(p, k) { var v = p.a[k] != null ? p.a[k] : p.ovr - 8; return p.fat > 40 ? v - (p.fat - 40) * .06 : v; }
-  function units(G, ab, home) {
-    var L = lineup(G, ab), t = G.teams[ab];
+  function units(G, ab, home, lvl) {
+    var L = lineup(G, ab, lvl), t = G.teams[ab];
     var qb = L.QB[0], rb = L.RB[0], ol = L.OT.concat(L.G, L.C);
     var u = {
       L: L,
@@ -147,6 +149,8 @@ var HC = (function () {
     };
     var bonus = (t.chem - 50) / 50 * 2.5 + (home ? 1 : 0);
     if (G.user && G.user.ab === ab) bonus += (G.user.plan && G.user.plan.gp) ? 1.8 : (G.user.gameplanBonus || 0);
+    // Week 1 sharpness: starters who got preseason snaps start faster (0 quarters = rusty, ~3 = league norm)
+    if (G.phase === 'regular' && G.week === 1 && t.sharp != null) bonus += clamp((t.sharp - 3) * .12, -.4, 1.1);
     ['pass', 'recv', 'pblk', 'rblk', 'rush', 'prs', 'rdef', 'cov'].forEach(function (k) { u[k] += bonus; });
     u.disc = (G.user && G.user.ab === ab) ? G.user.disc : 50;
     return u;
@@ -158,7 +162,12 @@ var HC = (function () {
     var off = o / on, def = avg(d);
     return { off: Math.round(off), def: Math.round(def), ovr: Math.round(off * .52 + def * .48) };
   };
-  E.capUsed = function (G, ab) { var s = G.teams[ab].dead || 0; teamPlayers(G, ab).forEach(function (p) { s += p.sal; }); return s; };
+  // In training camp only the top 51 salaries count against the cap (NFL offseason rule)
+  E.capUsed = function (G, ab) {
+    var s = G.teams[ab].dead || 0, a = teamPlayers(G, ab).map(function (p) { return p.sal || 0; });
+    if (G.phase === 'camp' && a.length > 51) { a.sort(function (x, y) { return y - x; }); a.length = 51; }
+    a.forEach(function (v) { s += v; }); return s;
+  };
   E.capSpace = function (G, ab) { return G.cap - E.capUsed(G, ab); };
 
   // ---------- Play calling & simulation ----------
@@ -201,19 +210,37 @@ var HC = (function () {
   };
   E.newGame = function (G, home, away, opts) {
     opts = opts || {};
-    var gs = { home: home, away: away, sc: {}, q: 1, clock: 900, pos: null, ball: 35, down: 1, togo: 10, over: false, log: [], drives: [], ot: false, playoff: !!opts.playoff, plays: 0, tst: {}, last: null, recentRuns: 0, injuries: [] };
+    var gs = { home: home, away: away, sc: {}, q: 1, clock: 900, pos: null, ball: 35, down: 1, togo: 10, over: false, log: [], drives: [], ot: false, playoff: !!opts.playoff, plays: 0, tst: {}, last: null, recentRuns: 0, injuries: [], neutral: !!opts.neutral, pre: !!opts.pre, sq: opts.sq || {}, lvl: {}, played: {}, pg: {} };
     gs.sc[home] = 0; gs.sc[away] = 0;
     [home, away].forEach(function (ab) { gs.tst[ab] = { yds: 0, pass: 0, rush: 0, to: 0, fd: 0, plays: 0, top: 0, sacks: 0 }; });
-    gs.U = {}; gs.U[home] = units(G, home, !opts.neutral); gs.U[away] = units(G, away, false);
+    gs.U = {}; [home, away].forEach(function (ab) { gs.lvl[ab] = preLevel(gs, ab, 1); setU(G, gs, ab); });
     gs.recv1 = rnd() < .5 ? home : away;
     kickoff(G, gs, gs.recv1);
     return gs;
   };
   function other(gs, ab) { return ab === gs.home ? gs.away : gs.home; }
   E.other = other;
+  // preseason: starters play quarters 1..sq, then the 2nd string, 3rd string in the 4th quarter
+  function preLevel(gs, ab, q) { if (!gs.pre) return 0; var sq = gs.sq[ab] == null ? 1 : gs.sq[ab]; return q <= sq ? 0 : q >= 4 ? 2 : 1; }
+  function setU(G, gs, ab) {
+    gs.U[ab] = units(G, ab, ab === gs.home && !gs.neutral, gs.lvl ? gs.lvl[ab] : 0);
+    if (gs.played) { var L = gs.U[ab].L; for (var pos in L) L[pos].forEach(function (p) { if (!p.rep) gs.played[p.id] = 1; }); }
+  }
+  function preSwap(G, gs) {
+    [gs.home, gs.away].forEach(function (ab) {
+      var lv = preLevel(gs, ab, gs.q); if (lv === gs.lvl[ab]) return;
+      gs.lvl[ab] = lv; setU(G, gs, ab);
+      log(gs, { t: G.teams[ab].name + ': ' + (lv === 1 ? 'the second string takes over.' : lv === 2 ? 'third-stringers and camp bodies are in.' : 'starters back in.'), sys: 1 });
+    });
+  }
   function pname(p) { return p.rep ? 'a replacement' : (p.fn.charAt(0) + '. ' + p.ln); }
   E.pname = pname;
-  function st(G, p, k, v) { if (!p || p.rep) return; p.st[k] = (p.st[k] || 0) + v; }
+  var CUR = { pre: 0, pg: null };
+  function st(G, p, k, v) {
+    if (!p || p.rep) return;
+    if (CUR.pre) { var ps = p.pst || (p.pst = {}); ps[k] = (ps[k] || 0) + v; var o = CUR.pg[p.id] || (CUR.pg[p.id] = {}); o[k] = (o[k] || 0) + v; return; }
+    p.st[k] = (p.st[k] || 0) + v;
+  }
   function startDrive(gs, ab, ball) { gs.pos = ab; gs.ball = ball; gs.down = 1; gs.togo = Math.min(10, 100 - ball); gs.drive = { team: ab, start: ball, plays: 0, yds: 0, q: gs.q, clock: gs.clock, result: '' }; }
   function endDrive(gs, res) { if (gs.drive) { gs.drive.result = res; gs.drive.end = gs.ball; gs.drives.push(gs.drive); gs.drive = null; } }
   function kickoff(G, gs, recv) {
@@ -284,7 +311,7 @@ var HC = (function () {
     if (rnd() < risk) {
       p.inj = pick([1, 1, 1, 2, 2, 3, 4, 6, 8]);
       gs.injuries.push(p.id);
-      gs.U[p.tm] = units(G, p.tm, p.tm === gs.home);
+      setU(G, gs, p.tm);
       return ' INJURY: ' + pname(p) + ' leaves the game (out ' + p.inj + ' wk' + (p.inj > 1 ? 's' : '') + ').';
     }
     return '';
@@ -298,6 +325,7 @@ var HC = (function () {
 
   function runPlay(G, gs, oc, dc) {
     if (gs.over) return null;
+    CUR.pre = gs.pre ? 1 : 0; CUR.pg = gs.pre ? (gs.pg || (gs.pg = {})) : null;
     var off = gs.pos, def = other(gs, off), U = gs.U[off], D = gs.U[def], L = U.L, DL = D.L;
     var discF = 1.15 - (U.disc / 100) * .3;
     var margin = Math.abs(gs.sc[off] - gs.sc[def]), crunch = (gs.q >= 4 && gs.clock <= 300 && margin <= 8) || gs.q >= 5;
@@ -464,9 +492,10 @@ var HC = (function () {
     if (gs.over) return null;
     if (gs.ot && gs.q >= 5 && gs.sc[gs.home] !== gs.sc[gs.away]) { finish(G, gs); return null; }
     if (gs.clock > 0) return null;
-    if (gs.q === 1 || gs.q === 3) { gs.q++; gs.clock = 900; log(gs, { t: 'End of the ' + (gs.q === 2 ? '1st' : '3rd') + ' quarter.', sys: 1 }); return null; }
-    if (gs.q === 2) { gs.q = 3; gs.clock = 900; endDrive(gs, 'Half'); log(gs, { t: 'HALFTIME: ' + G.teams[gs.away].name + ' ' + gs.sc[gs.away] + ', ' + G.teams[gs.home].name + ' ' + gs.sc[gs.home] + '.', sys: 1, big: 1 }); kickoff(G, gs, other(gs, gs.recv1)); return null; }
+    if (gs.q === 1 || gs.q === 3) { gs.q++; gs.clock = 900; log(gs, { t: 'End of the ' + (gs.q === 2 ? '1st' : '3rd') + ' quarter.', sys: 1 }); if (gs.pre) preSwap(G, gs); return null; }
+    if (gs.q === 2) { gs.q = 3; gs.clock = 900; endDrive(gs, 'Half'); log(gs, { t: 'HALFTIME: ' + G.teams[gs.away].name + ' ' + gs.sc[gs.away] + ', ' + G.teams[gs.home].name + ' ' + gs.sc[gs.home] + '.', sys: 1, big: 1 }); if (gs.pre) preSwap(G, gs); kickoff(G, gs, other(gs, gs.recv1)); return null; }
     if (gs.sc[gs.home] !== gs.sc[gs.away]) { finish(G, gs); return null; }
+    if (gs.pre) { finish(G, gs); return null; } // no overtime in the preseason
     if (gs.q >= 5 && !gs.playoff) { finish(G, gs); return null; }
     gs.q++; gs.clock = gs.playoff ? 900 : 600; gs.ot = true; endDrive(gs, 'End of regulation');
     log(gs, { t: (gs.q === 5 ? 'OVERTIME' : 'ANOTHER OVERTIME') + ': tied at ' + gs.sc[gs.home] + '. Next score wins.', sys: 1, big: 1 });
@@ -491,6 +520,14 @@ var HC = (function () {
   E.finalizeGame = function (G, gs, game) {
     var h = gs.home, a = gs.away, hs = gs.sc[h], as = gs.sc[a];
     game.hs = hs; game.as = as; game.ot = gs.ot;
+    if (gs.pre) {
+      CUR.pre = 1; CUR.pg = gs.pg || (gs.pg = {});
+      for (var pid in gs.played) if (G.players[pid]) st(G, G.players[pid], 'gp', 1);
+      CUR.pre = 0; CUR.pg = null;
+      preGrades(G, gs, game);
+      return;
+    }
+    CUR.pre = 0; CUR.pg = null;
     [h, a].forEach(function (ab) { var L = gs.U[ab].L; for (var pos in L) L[pos].forEach(function (p) { st(G, p, 'gp', 1); }); });
     if (gs.playoff) return;
     var TH = G.teams[h], TA = G.teams[a];
@@ -499,15 +536,17 @@ var HC = (function () {
     else if (as > hs) { TA.w++; TH.l++; TA.streak = Math.max(1, TA.streak + 1); TH.streak = Math.min(-1, TH.streak - 1); if (TH.div === TA.div) TA.divW++; }
     else { TH.t++; TA.t++; TH.streak = 0; TA.streak = 0; }
   };
-  E.quickSim = function (G, h, a, playoff, neutral) { var gs = E.newGame(G, h, a, { playoff: playoff, neutral: neutral }); E.simToEnd(G, gs); return gs; };
+  E.quickSim = function (G, h, a, playoff, neutral, extra) { var o = extra || {}; o.playoff = playoff; o.neutral = neutral; var gs = E.newGame(G, h, a, o); E.simToEnd(G, gs); return gs; };
 
   // ---------- Week flow ----------
   E.userGame = function (G) {
     if (G.phase === 'regular') { var wk = G.sched[G.week - 1] || []; for (var i = 0; i < wk.length; i++) if (wk[i].h === G.user.ab || wk[i].a === G.user.ab) return wk[i]; return null; }
     if (G.phase === 'playoffs' && G.playoffs) { var r = G.playoffs.rounds[G.playoffs.round] || []; for (var j = 0; j < r.length; j++) if (r[j].h === G.user.ab || r[j].a === G.user.ab) return r[j]; }
+    if (G.phase === 'camp') return E.campGame(G);
     return null;
   };
   E.recordUserGame = function (G, gs) {
+    if (G.phase === 'camp') return campRecord(G, gs);
     var g = E.userGame(G); if (!g || g.hs !== null) return;
     E.finalizeGame(G, gs, g);
     g.box = { tst: gs.tst, ot: gs.ot };
@@ -518,6 +557,7 @@ var HC = (function () {
   };
   E.advanceWeek = function (G) {
     if (G.phase !== 'regular') return;
+    if (G.user.daily) E.finishWeekDays(G);
     var wk = G.sched[G.week - 1];
     wk.forEach(function (g) { if (g.hs === null) { var gs = E.quickSim(G, g.h, g.a); E.finalizeGame(G, gs, g); if (g.h === G.user.ab || g.a === G.user.ab) { var me = G.user.ab, o = g.h === me ? g.a : g.h; G.user.lastResult = gs.sc[me] > gs.sc[o] ? 'W' : gs.sc[me] < gs.sc[o] ? 'L' : 'T'; addNews(G, 'SIMMED: ' + G.teams[me].name + ' ' + gs.sc[me] + ', ' + G.teams[o].name + ' ' + gs.sc[o] + '.', G.user.lastResult === 'W' ? 'win' : 'loss'); } } });
     weeklyUpdate(G, wk);
@@ -532,6 +572,7 @@ var HC = (function () {
     for (id in G.players) { var p0 = G.players[id]; if (p0.inj > 0) p0.inj--; }
     practiceWeek(G, false);
     G.user.gameplanBonus = 0;
+    G.order.forEach(function (ab) { delete G.teams[ab].sharp; });
     weeklyTrades(G); tradeRequests(G);
     var res = G.user.lastResult, Lm = lineup(G, me), starters = {}, pos;
     for (pos in Lm) Lm[pos].forEach(function (p) { starters[p.id] = 1; });
@@ -721,7 +762,9 @@ var HC = (function () {
     fixPlan(G, u.plan);
     for (var id in G.players) ensureP(G, G.players[id]);
     E.migrateTrades(G);
-    if (!G.v || G.v < 3) G.v = 3;
+    if (u.daily == null) { u.daily = 1; if (G.phase === 'regular') u.wk = { s: G.season, w: G.week, d: 6, t: ['off', 'off', 'pad', 'pad', 'np', 'walk'], plans: {}, agg: null, last: null }; }
+    if (G.phase === 'camp' && !G.camp) E.startCamp(G);
+    if (!G.v || G.v < 4) G.v = 4;
     return G;
   };
   function growthD(p, mult, devCulture) {
@@ -746,11 +789,13 @@ var HC = (function () {
       p.a[k] = clamp(p.a[k] + d * m * rf(.6, 1.4), 25, 99);
     });
   }
-  function runPractice(G, ab, plan, devCulture, isUser) {
+  function runPractice(G, ab, plan, devCulture, isUser, o) {
+    o = o || {};
+    var gF = o.g == null ? 1 : o.g, lF = o.lf == null ? 1 : o.lf, keep = o.keep == null ? .45 : o.keep, iF = o.ik == null ? 1 : o.ik, mF = o.mf == null ? 1 : o.mf;
     var sumH = 0; PGROUPS.forEach(function (g) { sumH += plan.hrs[g.k] || 0; });
     var sess = (plan.gp ? SESSION_COST.gp : 0) + (plan.cond ? SESSION_COST.cond : 0);
     var scale = sumH + sess > PRAC_BUDGET && sumH > 0 ? Math.max(0, PRAC_BUDGET - sess) / sumH : 1;
-    var rep = isUser ? { season: G.season, label: G.phase === 'playoffs' ? 'Playoff week' : 'Week ' + G.week, groups: {}, inj: [], hrs: Math.round(E.planHours(plan) * 10) / 10 } : null;
+    var rep = isUser ? { season: G.season, label: o.label || (G.phase === 'playoffs' ? 'Playoff week' : 'Week ' + G.week), groups: {}, inj: [], hrs: Math.round(E.planHours(plan) * (o.hrsF == null ? 1 : o.hrsF) * 10) / 10 } : null;
     teamPlayers(G, ab).forEach(function (p) {
       ensureP(G, p);
       var g = GROUP_OF[p.pos]; if (!g) return;
@@ -758,26 +803,27 @@ var HC = (function () {
       var isF = plan.fp.indexOf(p.id) >= 0;
       var before = isUser ? snapA(p) : null, w0 = wovr(p);
       var repsF = .3 + .7 * Math.pow(h / 2.2, .85);
-      var d = growthD(p, repsF * it.g * (isF ? 1.6 : 1), devCulture);
+      var d = growthD(p, repsF * it.g * (isF ? 1.6 : 1), devCulture) * gF;
       applyGrowth(p, d, dr[3]);
       p.ovr = calcOvr(p); if (p.ovr > p.pot) p.pot = p.ovr;
       var dw = wovr(p) - w0; p.prog = (p.prog || 0) + dw;
       // fatigue & injury
-      var load = h * it.load * (isF ? 1.15 : 1);
-      p.fat = clamp((p.fat || 0) * .45 + load, 0, 100);
+      var load = h * it.load * (isF ? 1.15 : 1) * lF;
+      p.fat = clamp((p.fat || 0) * keep + load, 0, 100);
       var injN = 0;
-      if (!p.inj && h > 0 && rnd() < .0005 * h * it.inj * (1 + p.fat / 40)) { injN = pick([1, 1, 1, 2, 2, 3]); p.inj = injN; }
+      if (!p.inj && h > 0 && rnd() < .0005 * h * it.inj * (1 + p.fat / 40) * iF) { injN = pick([1, 1, 1, 2, 2, 3]); p.inj = injN; }
+      if (o.camp) campScore(p, d, h);
       // morale reaction to the workload (personality matters)
       var pm = it.mor;
       if (pm < 0 && (p.pers === 'COMP' || p.pers === 'PRO')) pm *= .5;
       if (pm < 0 && (p.pers === 'DIVA' || p.pers === 'CANCER' || p.pers === 'HOT')) pm *= 1.7;
-      p.mor = clamp(p.mor + pm + (h >= 5 ? -.4 : 0) + (isF ? .5 : 0), 0, 100);
+      p.mor = clamp(p.mor + (pm + (h >= 5 ? -.4 : 0) + (isF ? .5 : 0)) * mF, 0, 100);
       if (isUser) {
         if (!p.dh) p.dh = [Math.round(w0 * 10) / 10];
-        p.dh.push(Math.round(wovr(p) * 10) / 10); if (p.dh.length > 24) p.dh.shift();
-        var at = [], k; for (k in before) { var dd = p.a[k] - before[k]; if (Math.abs(dd) >= .05) at.push([k, Math.round(dd * 100) / 100]); }
+        if (!o.noHist) { p.dh.push(Math.round(wovr(p) * 10) / 10); if (p.dh.length > 24) p.dh.shift(); }
+        var at = [], k; for (k in before) { var dd = p.a[k] - before[k]; if (Math.abs(dd) >= (o.g != null ? .005 : .05)) at.push([k, dd]); }
         at.sort(function (a, b) { return Math.abs(b[1]) - Math.abs(a[1]); });
-        (rep.groups[g.k] = rep.groups[g.k] || []).push({ id: p.id, d: Math.round(dw * 100) / 100, at: at.slice(0, 3), fat: Math.round(p.fat), inj: injN, f: isF ? 1 : 0 });
+        (rep.groups[g.k] = rep.groups[g.k] || []).push({ id: p.id, d: Math.round(dw * 1000) / 1000, at: at.slice(0, 3).map(function (x) { return [x[0], Math.round(x[1] * 1000) / 1000]; }), fat: Math.round(p.fat), inj: injN, f: isF ? 1 : 0 });
         if (injN) rep.inj.push({ id: p.id, w: injN });
       }
     });
@@ -790,6 +836,7 @@ var HC = (function () {
     G.order.forEach(function (ab) {
       var u = ab === me;
       if (playoffs && !u && G.playoffs && G.playoffs.elim[ab]) return;
+      if (u && !playoffs && G.user.daily && G.user.wk && G.user.wk.s === G.season && G.user.wk.w === G.week && G.user.wk.d >= 6) return; // practiced day by day this week
       var rep = runPractice(G, ab, u ? G.user.plan : autoPlan(G, ab), u ? G.user.dev : 50, u);
       if (u) {
         G.user.prac = rep;
@@ -1175,7 +1222,7 @@ var HC = (function () {
       var p = G.players[id];
       if (p.tm === 'DRAFT') { delete G.players[id]; continue; }
       p.age++; p.exp++; p.st = {}; p.prog = 0; p.inj = 0; p.rookie = 0; p.neg = 0;
-      develop(G, p, 'balanced', 'normal', p.tm === me ? G.user.dev : 50, 10);
+      develop(G, p, 'balanced', 'normal', p.tm === me ? G.user.dev : 50, CAMP_OFFSEASON_WEEKS);
       p.prog = 0;
       if (p.tm !== 'FA' && !p.fresh) p.yrs--;
       p.fresh = 0;
@@ -1190,18 +1237,17 @@ var HC = (function () {
       var t = G.teams[ab]; t.w = t.l = t.t = t.pf = t.pa = t.divW = t.streak = 0; t.dead = 0;
       if (ab !== me) { var c = 0; while (E.capUsed(G, ab) > G.cap - 2000 && c++ < 40) { var cut = teamPlayers(G, ab).filter(function (p) { return p.sal > 2000; }).sort(function (a, b) { return (a.ovr / a.sal) - (b.ovr / b.sal); })[0]; if (!cut) break; cut.tm = 'FA'; cut.sal = 0; cut.yrs = 0; } }
       autoDepth(G, ab);
-      cutTo(G, ab, 53, ab === me);
-      var nb = teamPlayers(G, ab).length; aiFillMin(G, ab); if (ab === me && teamPlayers(G, ab).length > nb) addNews(G, 'Front office signed ' + (teamPlayers(G, ab).length - nb) + ' free agents to fill out the 53-man roster. Review them in Free Agency / Roster.');
+      cutTo(G, ab, 90, ab === me);
       autoDepth(G, ab);
     });
-    var fas = faList(G); fas.slice(320).forEach(function (p) { delete G.players[p.id]; });
+    var fas = faList(G); fas.slice(500).forEach(function (p) { delete G.players[p.id]; });
     G.sched = G.sched.map(function (wk) { return wk.map(function (g) { return { h: g.a, a: g.h, hs: null, as: null }; }); });
-    G.phase = 'regular'; G.week = 1; G.playoffs = null; G.draft = null; G.user.sp += 40;
+    G.phase = 'camp'; G.week = 1; G.playoffs = null; G.draft = null; G.user.sp += 40;
     for (id in G.players) { var q = G.players[id]; ensureP(G, q); q.a0 = snapA(q); q.fat = 0; q.dh = q.tm === me ? [Math.round(wovr(q) * 10) / 10] : undefined; }
     G.user.prac = null; G.user.plan.fp = G.user.plan.fp.filter(function (pid) { return G.players[pid] && G.players[pid].tm === me; });
     E.genDraftClass(G);
     addNews(G, 'Welcome to the ' + G.season + ' season! Salary cap: ' + fmtM(G.cap) + '.' + (left.length ? ' Left in free agency: ' + left.slice(0, 4).map(function (p) { return p.ln; }).join(', ') + (left.length > 4 ? ' +' + (left.length - 4) : '') + '.' : '') + (retired.length ? ' Retired: ' + retired.map(function (p) { return p.ln; }).join(', ') + '.' : ''), 'big');
-    E.newWeeklyEvent(G);
+    E.startCamp(G);
     return { left: left, retired: retired };
   };
   function cutTo(G, ab, n, isUser) {
@@ -1212,7 +1258,7 @@ var HC = (function () {
     ps.forEach(function (p) { if ((cnt[p.pos] || 0) < (ROSTER_MIN[p.pos] || 0)) { keep[p.id] = 1; kept++; cnt[p.pos] = (cnt[p.pos] || 0) + 1; } });
     ps.forEach(function (p) { if (!keep[p.id]) { if (kept < n) { keep[p.id] = 1; kept++; } else cut.push(p); } });
     cut.forEach(function (p) { p.tm = 'FA'; p.sal = 0; p.yrs = 0; });
-    if (isUser && cut.length) addNews(G, 'Roster cutdown to 53: released ' + cut.length + ' players (' + cut.slice(0, 5).map(function (p) { return p.ln; }).join(', ') + (cut.length > 5 ? '…' : '') + ').');
+    if (isUser && cut.length) addNews(G, 'Roster cutdown to ' + n + ': released ' + cut.length + ' players (' + cut.slice(0, 5).map(function (p) { return p.ln; }).join(', ') + (cut.length > 5 ? '…' : '') + ').');
     syncDepth(G, ab);
     return cut;
   }
@@ -1526,6 +1572,437 @@ var HC = (function () {
     if (!G.user.offers) G.user.offers = [];
     if (G.phase === 'freeagency' && !G.fa) G.fa = { day: 1, days: FA_DAYS, offers: {}, mine: {}, results: [] };
   };
+
+  // =====================================================================
+  // TRAINING CAMP · PRESEASON · CUTDOWN · DAY-BY-DAY PRACTICE
+  // =====================================================================
+  var DAY_T = {
+    pad: { n: 'Padded', ic: '🛡️', g: 1, load: 1, inj: 1, mor: 1, d: 'Full pads and live contact: the most growth, the most fatigue and injury risk.' },
+    np: { n: 'Non-padded', ic: '👕', g: .75, load: .55, inj: .45, mor: .6, d: 'Helmets and shells: solid reps with a lighter load.' },
+    walk: { n: 'Walkthrough', ic: '🚶', g: .3, load: .15, inj: .1, mor: 0, d: 'Mental reps and installs: almost no load. Good the day before a game.' },
+    off: { n: 'Rest', ic: '😴', g: 0, load: 0, inj: 0, mor: 0, d: 'Day off: fatigue drops by half and morale ticks up.' },
+    game: { n: 'Preseason game', ic: '🏈' }, cut: { n: 'Cutdown day', ic: '✂️' }
+  };
+  E.DAY_T = DAY_T;
+  // One padded day = 1/3.05 of a weekly session, so the standard in-season week
+  // (padded, padded, non-padded, walkthrough) equals exactly one week of the weekly planner.
+  var DAY_UNIT = 1 / 3.05, FAT_KEEP = .75, FAT_REST = .5, FAT_C = 3.3;
+  var CAMP_OFFSEASON_WEEKS = 4; // camp now supplies the rest of the offseason development (was 10 weeks)
+  var PS_DAYS = [14, 21, 28], CUT_DAY = 31, CAMP_MAX = 90;
+  E.PS_DAYS = PS_DAYS; E.CUT_DAY = CUT_DAY; E.DAY_UNIT = DAY_UNIT;
+  var CAMP_TARGET = { QB: 4, RB: 5, WR: 10, TE: 5, OT: 7, G: 7, C: 3, EDGE: 8, DT: 7, LB: 8, CB: 10, S: 7, K: 2, P: 1, LS: 1 };
+  var CAMP_MAXPOS = { K: 2, P: 2, LS: 1, QB: 4 };
+  var WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function dailyOpts(T, label, camp) { return { g: DAY_UNIT * T.g, lf: DAY_UNIT * FAT_C * T.load, keep: FAT_KEEP, ik: DAY_UNIT * T.inj, mf: DAY_UNIT * T.mor, label: label, noHist: 1, camp: camp, hrsF: DAY_UNIT * T.g }; }
+  E.dayHours = function (plan, t) { var T = DAY_T[t]; if (!T || !T.g) return 0; return Math.round(E.planHours(plan) * DAY_UNIT * T.g * 10) / 10; };
+  // Camp opens on the Saturday two weeks before the first preseason game; cutdown is the Tuesday 16 days before the opener (Thursday after Labor Day)
+  function campOpen(yr) { var d = new Date(Date.UTC(yr, 8, 1)); while (d.getUTCDay() !== 1) d.setUTCDate(d.getUTCDate() + 1); d.setUTCDate(d.getUTCDate() + 3 - 16 - CUT_DAY); return d; }
+  function campDate(G, i) { var d = campOpen(G.season); d.setUTCDate(d.getUTCDate() + i); return d; }
+  E.campDate = campDate;
+  E.dateLabel = function (d, long) { return WD[d.getUTCDay()] + ' ' + MO[d.getUTCMonth()] + ' ' + d.getUTCDate() + (long ? ', ' + d.getUTCFullYear() : ''); };
+  E.openerDate = function (G) { var d = campOpen(G.season); d.setUTCDate(d.getUTCDate() + CUT_DAY + 16); return d; };
+  function defaultType(i) {
+    if (PS_DAYS.indexOf(i) >= 0) return 'game';
+    if (i === CUT_DAY) return 'cut';
+    if (i <= 1 || i === 30) return 'np';
+    if (i === 5 || i === 10 || i === 15 || i === 22 || i === 29) return 'off';
+    if (PS_DAYS.indexOf(i + 1) >= 0) return 'walk';
+    return 'pad';
+  }
+  E.defaultDayType = defaultType;
+  // rough stadium coordinates for plausible (regional) preseason matchups
+  var GEO = { ARI: [33.5, -112.3], ATL: [33.8, -84.4], BAL: [39.3, -76.6], BUF: [42.8, -78.8], CAR: [35.2, -80.9], CHI: [41.9, -87.6], CIN: [39.1, -84.5], CLE: [41.5, -81.7], DAL: [32.7, -97.1], DEN: [39.7, -105.0], DET: [42.3, -83.0], GB: [44.5, -88.1], HOU: [29.7, -95.4], IND: [39.8, -86.2], JAX: [30.3, -81.6], KC: [39.0, -94.5], LV: [36.1, -115.2], LAC: [33.9, -118.3], LAR: [33.95, -118.35], MIA: [25.9, -80.2], MIN: [44.97, -93.26], NE: [42.1, -71.3], NO: [29.95, -90.08], NYG: [40.81, -74.07], NYJ: [40.82, -74.08], PHI: [39.9, -75.2], PIT: [40.4, -80.0], SF: [37.4, -122.0], SEA: [47.6, -122.3], TB: [27.98, -82.5], TEN: [36.17, -86.77], WSH: [38.9, -76.86] };
+  function geoD(a, b) { var A = GEO[a] || [38, -90], B = GEO[b] || [38, -90]; var dx = (A[1] - B[1]) * Math.cos((A[0] + B[0]) / 2 * Math.PI / 180), dy = A[0] - B[0]; return Math.sqrt(dx * dx + dy * dy); }
+  function preseasonSchedule(G) {
+    var met = {}, home = {}, weeks = [];
+    G.order.forEach(function (ab) { home[ab] = 0; });
+    for (var w = 0; w < 3; w++) {
+      var games = null, best = null;
+      for (var att = 0; att < 40 && !games; att++) {
+        var pairs = [];
+        G.order.forEach(function (a, i) { G.order.forEach(function (b, j) { if (j <= i) return; if (G.teams[a].div === G.teams[b].div || met[a + b] || met[b + a]) return; pairs.push([a, b, geoD(a, b) * rf(.6, 1.5) + (G.teams[a].conf === G.teams[b].conf ? 2 : 0) + rf(0, 4 + att)]); }); });
+        pairs.sort(function (x, y) { return x[2] - y[2]; });
+        var used = {}, gl = [];
+        pairs.forEach(function (pr) { if (used[pr[0]] || used[pr[1]]) return; used[pr[0]] = used[pr[1]] = 1; gl.push([pr[0], pr[1]]); });
+        if (gl.length * 2 === G.order.length) games = gl; else if (!best || gl.length > best.length) best = gl;
+      }
+      if (!games) {
+        games = best; var used2 = {}; games.forEach(function (g) { used2[g[0]] = used2[g[1]] = 1; });
+        var left = G.order.filter(function (ab) { return !used2[ab]; });
+        for (var k = 0; k + 1 < left.length; k += 2) games.push([left[k], left[k + 1]]);
+      }
+      weeks.push(games.map(function (g) {
+        met[g[0] + g[1]] = 1;
+        var h = home[g[0]] < home[g[1]] ? g[0] : home[g[1]] < home[g[0]] ? g[1] : (rnd() < .5 ? g[0] : g[1]), a = h === g[0] ? g[1] : g[0];
+        home[h]++;
+        return { h: h, a: a, hs: null, as: null };
+      }));
+    }
+    return weeks;
+  }
+  E.preseasonSchedule = preseasonSchedule;
+  function campMinSal(p) { return p.exp <= 0 ? 900 : p.exp <= 2 ? 1000 : 1150; }
+  function genBody(G, pos) {
+    G.campSeq = (G.campSeq || 0) + 1;
+    var ovr = Math.round(clamp(53 + gauss() * 4.5, 42, 66)), age = ri(22, 25), id = 'c' + G.season + '_' + G.campSeq;
+    var p = { id: id, fn: pick(FN), ln: pick(LN), pos: pos, tm: 'FA', age: age, exp: age <= 22 ? 0 : ri(0, 2), num: '', sal: 0, yrs: 0, draft: 'Undrafted', col: pick(COL), ht: ({ QB: 75, RB: 70, WR: 73, TE: 77, OT: 78, G: 76, C: 75, EDGE: 76, DT: 75, LB: 74, CB: 72, S: 72, K: 72, P: 74, LS: 74 })[pos] + ri(-2, 2), wt: (BASE_WT[pos] || 230) + ri(-12, 12), real: 0, mor: ri(62, 78), inj: 0, st: {}, prog: 0, cb: 1, sc: 3 };
+    p.a = genAttrs(pos, ovr); p.ovr = calcOvr(p);
+    p.pot = Math.max(p.ovr, Math.round(clamp(p.ovr + (age <= 23 ? ri(1, 15) : ri(0, 7)), 40, 88)));
+    G.players[id] = p; ensureP(G, p);
+    return p;
+  }
+  E.genBody = genBody;
+  function campInit(p) { p.cmp = { f: Math.round(gauss() * 15) / 10, ps: 0, pn: 0, g: [] }; p.pst = {}; }
+  function fillCamps(G) {
+    var pool = {}, n = {}, cnt = {}, signed = {};
+    for (var id in G.players) { var q = G.players[id]; if (q.tm === 'FA' && (q.ovr < 66 || q.age <= 24) && q.ovr >= 45 && q.age <= 31) (pool[q.pos] = pool[q.pos] || []).push(q); }
+    for (var pos in pool) pool[pos].sort(function (a, b) { return (b.pot * .55 + b.ovr * .45 - (b.age > 26 ? 4 : 0)) - (a.pot * .55 + a.ovr * .45 - (a.age > 26 ? 4 : 0)); });
+    G.order.forEach(function (ab) { cnt[ab] = {}; var ps = teamPlayers(G, ab); n[ab] = ps.length; ps.forEach(function (p) { cnt[ab][p.pos] = (cnt[ab][p.pos] || 0) + 1; }); signed[ab] = 0; });
+    var guard = 0, any = true;
+    while (any && guard++ < 120) {
+      any = false;
+      var ord = G.order.slice().sort(function () { return rnd() - .5; });
+      ord.forEach(function (ab) {
+        if (n[ab] >= CAMP_MAX) return; any = true;
+        var c = cnt[ab], best = null, bv = 1e9;
+        for (var ps in CAMP_TARGET) { if ((c[ps] || 0) >= (CAMP_MAXPOS[ps] || 99)) continue; var v = (c[ps] || 0) / CAMP_TARGET[ps]; if (v < bv) { bv = v; best = ps; } }
+        if (!best) best = pick(['WR', 'CB', 'LB', 'EDGE', 'OT', 'G', 'DT', 'S']);
+        var f = (pool[best] || []).shift();
+        if (!f || f.tm !== 'FA') f = genBody(G, best);
+        f.tm = ab; f.sal = campMinSal(f); f.yrs = 1; f.fresh = 0; f.lastTm = undefined; f.mor = clamp(f.mor + 6, 0, 100);
+        c[best] = (c[best] || 0) + 1; n[ab]++; signed[ab]++;
+      });
+    }
+    return signed;
+  }
+  E.startCamp = function (G) {
+    var me = G.user.ab;
+    G.phase = 'camp'; G.week = 1;
+    var days = []; for (var i = 0; i <= CUT_DAY; i++) days.push({ t: defaultType(i), done: 0 });
+    G.camp = { season: G.season, day: 0, days: days, ps: preseasonSchedule(G), sq: 1, cuts: [], last: null, agg: null, res: [], open: E.dateLabel(campDate(G, 0), true) };
+    var vets = 0; G.order.forEach(function (ab) { var nb = teamPlayers(G, ab).length; aiFillMin(G, ab); if (ab === me) vets = teamPlayers(G, ab).length - nb; });
+    if (vets > 0) addNews(G, 'Front office signed ' + vets + ' veteran free agents to cover thin spots before camp. Review them in Roster / Free Agency.');
+    G.order.forEach(function (ab) { G.teams[ab].sharp = 0; });
+    var signed = fillCamps(G);
+    for (var id in G.players) { var p = G.players[id]; if (p.tm !== 'FA' && p.tm !== 'DRAFT') { ensureP(G, p); campInit(p); } }
+    G.order.forEach(function (ab) { autoDepth(G, ab); });
+    G.user.pendingEvent = null; G.user.pressPending = null; G.user.prac = null; G.user.wk = null;
+    var mine = G.camp.ps.map(function (wk) { var g = wk.filter(function (x) { return x.h === me || x.a === me; })[0]; return g ? (g.h === me ? 'vs ' : '@ ') + g[g.h === me ? 'a' : 'h'] : '—'; });
+    addNews(G, 'Training camp opens ' + G.camp.open + '. ' + signed[me] + ' camp invitees and undrafted free agents join the ' + G.teams[me].name + ' (' + teamPlayers(G, me).length + '-man camp roster). Preseason: ' + mine.join(', ') + '. Cutdown to 53: ' + E.dateLabel(campDate(G, CUT_DAY)) + '.', 'big');
+    return G.camp;
+  };
+  function campScore(p, d, h) {
+    if (!p.cmp) campInit(p);
+    var s = p.cmp.f + ((p.eth == null ? 70 : p.eth) - 70) * .045 + ((p.coa == null ? 70 : p.coa) - 70) * .015 + gauss() * 2.2 - Math.max(0, (p.fat || 0) - 45) * .06 + (h > 0 ? 0 : -.5);
+    p.cmp.ps += s; p.cmp.pn++;
+  }
+  function campBonus(p) {
+    var c = p.cmp; if (!c) return 0;
+    var pr = c.pn ? clamp(c.ps / c.pn, -4, 4) : 0, gg = c.g.length ? clamp(avg(c.g.map(function (x) { return (x.g - 62) / 7; })), -4, 4) : 0;
+    return Math.round((pr * .6 + gg * .8) * 10) / 10;
+  }
+  E.campBonus = campBonus;
+  E.campGrade = function (p) { var b = campBonus(p); if (!p.cmp || (!p.cmp.pn && !p.cmp.g.length)) return '—'; return b >= 2.5 ? 'A' : b >= 1.4 ? 'A-' : b >= .6 ? 'B+' : b >= 0 ? 'B' : b >= -.7 ? 'C+' : b >= -1.5 ? 'C' : 'D'; };
+  E.battleScore = function (p) { return wovr(p) + campBonus(p) * .8; };
+  // Position battles: the last starting spot(s) where the next man is within 3 points
+  E.battles = function (G, ab) {
+    var out = [];
+    POS_ORDER.forEach(function (pos) {
+      var n = LINEUP[pos]; if (!n) return;
+      var ps = teamPlayers(G, ab).filter(function (p) { return p.pos === pos && !p.inj; }).sort(function (a, b) { return E.battleScore(b) - E.battleScore(a); });
+      if (ps.length <= n) return;
+      var inn = ps[n - 1], out1 = ps[n];
+      if (E.battleScore(inn) - E.battleScore(out1) <= 3) {
+        var depth = G.teams[ab].depth[pos] || [];
+        out.push({ pos: pos, spot: pos + (n > 1 ? n : '1'), lead: inn.id, chase: out1.id, gap: Math.round((E.battleScore(inn) - E.battleScore(out1)) * 10) / 10, onDepth: depth.indexOf(inn.id) < n, others: ps.slice(n + 1, n + 3).filter(function (p) { return E.battleScore(inn) - E.battleScore(p) <= 3; }).map(function (p) { return p.id; }) });
+      }
+    });
+    return out;
+  };
+  E.campDepth = function (G, ab) {
+    var t = G.teams[ab];
+    POS_ORDER.forEach(function (pos) { t.depth[pos] = teamPlayers(G, ab).filter(function (p) { return p.pos === pos; }).sort(function (a, b) { return E.battleScore(b) - E.battleScore(a); }).map(function (p) { return p.id; }); });
+  };
+  E.campGame = function (G) {
+    var C = G.camp; if (!C || G.phase !== 'camp') return null;
+    var k = PS_DAYS.indexOf(C.day); if (k < 0) return null;
+    var wk = C.ps[k] || []; for (var i = 0; i < wk.length; i++) if (wk[i].h === G.user.ab || wk[i].a === G.user.ab) return wk[i];
+    return null;
+  };
+  E.campWeek = function (G) { return G.camp ? PS_DAYS.indexOf(G.camp.day) : -1; };
+  function aiSq(k) { return k === 0 ? (rnd() < .45 ? 0 : 1) : k === 1 ? (rnd() < .35 ? 1 : 2) : (rnd() < .7 ? 0 : 1); }
+  // options for the user's current game (used by the UI for both live and quick-sim games)
+  E.gameOpts = function (G, g) {
+    if (G.phase === 'camp') { var sq = {}, me = G.user.ab, k = E.campWeek(G); sq[g.h] = g.h === me ? G.camp.sq : aiSq(k); sq[g.a] = g.a === me ? G.camp.sq : aiSq(k); return { pre: true, sq: sq }; }
+    return { playoff: G.phase === 'playoffs', neutral: g.neutral };
+  };
+  function statLine(p, s) {
+    var o = [];
+    if (s.pa) o.push(s.pc + '/' + s.pa + ', ' + (s.py || 0) + ' yds' + (s.ptd ? ', ' + s.ptd + ' TD' : '') + (s.int ? ', ' + s.int + ' INT' : ''));
+    if (s.ra) o.push(s.ra + ' car, ' + (s.ry || 0) + ' yds' + (s.rtd ? ', ' + s.rtd + ' TD' : ''));
+    if (s.rec) o.push(s.rec + ' rec, ' + (s.recy || 0) + ' yds' + (s.rectd ? ', ' + s.rectd + ' TD' : ''));
+    if (s.tkl || s.sck || s.dint || s.pd) o.push((s.tkl || 0) + ' tkl' + (s.sck ? ', ' + s.sck + ' sk' : '') + (s.dint ? ', ' + s.dint + ' INT' : '') + (s.pd ? ', ' + s.pd + ' PD' : ''));
+    if (s.fga) o.push(s.fgm + '/' + s.fga + ' FG');
+    return o.join(' · ');
+  }
+  E.statLine = statLine;
+  function preGrades(G, gs, game) {
+    var k = E.campWeek(G); if (k < 0) k = (game && game.k) || 0;
+    var T = {}; [gs.home, gs.away].forEach(function (ab) { var t = gs.tst[ab], o = other(gs, ab), td = gs.tst[o]; T[ab] = { ypp: t.yds / Math.max(1, t.plays), dypp: td.yds / Math.max(1, td.plays), to: t.to, tk: td.to, pts: gs.sc[ab], opp: gs.sc[o] }; });
+    [gs.home, gs.away].forEach(function (ab) { G.teams[ab].sharp = (G.teams[ab].sharp || 0) + (gs.sq[ab] == null ? 1 : gs.sq[ab]); });
+    var tops = [];
+    for (var pid in gs.played) {
+      var p = G.players[pid]; if (!p) continue;
+      var s = gs.pg[pid] || {}, t = T[p.tm] || { ypp: 5, dypp: 5, to: 0, tk: 0 }, pts;
+      if (OFF[p.pos] && (p.pos === 'OT' || p.pos === 'G' || p.pos === 'C')) pts = (t.ypp - 5.2) * 2.6 - t.to * .8;
+      else if (DEF[p.pos] && !(s.tkl || s.sck || s.dint || s.pd)) pts = (5.2 - t.dypp) * 1.8 + t.tk * .6;
+      else pts = (s.py || 0) * .04 + (s.ptd || 0) * 4 - (s.int || 0) * 4.5 + (s.pa ? ((s.pc || 0) / s.pa - .62) * 12 : 0) + (s.ry || 0) * .1 + (s.rtd || 0) * 5 - (s.ra ? Math.max(0, 3.6 - (s.ry || 0) / s.ra) * 1.2 : 0) + (s.recy || 0) * .1 + (s.rectd || 0) * 5 + (s.rec || 0) * .5 + (s.tkl || 0) * 1.1 + (s.sck || 0) * 4 + (s.dint || 0) * 6 + (s.pd || 0) * 2 + (s.ff || 0) * 3 + (s.fgm || 0) * 2 - ((s.fga || 0) - (s.fgm || 0)) * 3.5 - (s.pen || 0) * 2.5;
+      var g = Math.round(clamp(62 + pts * 1.5 + (p.ovr - 62) * .25 + gauss() * 4, 30, 99));
+      if (!p.cmp) campInit(p);
+      p.cmp.g.push({ k: k, g: g, s: statLine(p, s), vs: other(gs, p.tm) });
+      tops.push({ id: pid, g: g });
+    }
+    gs.grades = tops;
+  }
+  function campRecord(G, gs) {
+    var g = E.campGame(G); if (!g || g.hs !== null) return;
+    var me = G.user.ab, k = E.campWeek(G), opp = other(gs, me);
+    E.finalizeGame(G, gs, g);
+    var won = gs.sc[me] > gs.sc[opp], lost = gs.sc[me] < gs.sc[opp];
+    G.user.lastResult = null; G.user.pressPending = null;
+    // morale: playing time and performance (personality flavours it)
+    var starters = {}, L0 = lineup(G, me, 0); for (var pos in L0) L0[pos].forEach(function (p) { starters[p.id] = 1; });
+    var mine = (gs.grades || []).filter(function (x) { return G.players[x.id] && G.players[x.id].tm === me; }), notes = [];
+    mine.forEach(function (x) {
+      var p = G.players[x.id], d = 0;
+      if (x.g >= 78) d += 2.5; else if (x.g <= 45) d -= 1.5 * (p.pers === 'HOT' || p.pers === 'DIVA' ? 1.5 : 1);
+      if (!starters[p.id] && p.age <= 24) d += 1;
+      if (starters[p.id] && G.camp.sq >= 3 && p.age >= 29 && p.pers !== 'COMP') d -= 1.5;
+      p.mor = clamp(p.mor + d, 0, 100);
+    });
+    if (G.camp.sq === 0) teamPlayers(G, me).forEach(function (p) { if (starters[p.id] && p.pers === 'COMP') p.mor = clamp(p.mor - .8, 0, 100); });
+    mine.sort(function (a, b) { return b.g - a.g; });
+    var inj = gs.injuries.filter(function (id) { return G.players[id] && G.players[id].tm === me; });
+    G.camp.res[k] = { k: k, opp: opp, home: g.h === me, us: gs.sc[me], them: gs.sc[opp], sq: G.camp.sq, top: mine.slice(0, 6), low: mine.slice(-3).reverse(), inj: inj, tst: gs.tst[me] };
+    addNews(G, 'PRESEASON ' + (k + 1) + ': ' + G.teams[me].name + ' ' + gs.sc[me] + ', ' + G.teams[opp].name + ' ' + gs.sc[opp] + '. ' + (mine[0] ? 'Standout: ' + G.players[mine[0].id].pos + ' ' + G.players[mine[0].id].ln + ' (grade ' + mine[0].g + ').' : ''), won ? 'win' : lost ? 'loss' : '');
+    // the rest of the league's preseason games
+    (G.camp.ps[k] || []).forEach(function (x) { if (x === g || x.hs !== null) return; var sq = {}; sq[x.h] = aiSq(k); sq[x.a] = aiSq(k); var s2 = E.quickSim(G, x.h, x.a, false, false, { pre: true, sq: sq }); E.finalizeGame(G, s2, x); });
+    G.order.forEach(function (ab) { if (ab !== me) E.campDepth(G, ab); });
+    G.camp.days[G.camp.day].done = 1;
+    campAdvanceDay(G);
+    return G.camp.res[k];
+  }
+  function campAdvanceDay(G) {
+    var C = G.camp, me = G.user.ab; C.day++;
+    if (C.day % 7 === 0) for (var id in G.players) { var p = G.players[id]; if (p.inj > 0 && p.tm !== 'FA') p.inj--; }
+    if (C.day % 7 === 0 || C.day === CUT_DAY) teamPlayers(G, me).forEach(function (p) { if (!p.dh) p.dh = []; p.dh.push(Math.round(wovr(p) * 10) / 10); if (p.dh.length > 24) p.dh.shift(); });
+  }
+  var _aiPlans = { key: '', p: {} };
+  function aiPlanCached(G, ab, key) { if (_aiPlans.key !== key) _aiPlans = { key: key, p: {} }; return _aiPlans.p[ab] || (_aiPlans.p[ab] = autoPlan(G, ab)); }
+  function dayPlan(G, d) { if (!d.plan) return G.user.plan; fixPlan(G, d.plan); var o = {}; for (var k in d.plan) o[k] = d.plan[k]; o.fp = G.user.plan.fp; return o; }
+  function aggRep(acc, rep, label) {
+    if (!acc) acc = { season: rep.season, label: label, groups: {}, inj: [], hrs: 0, days: 0 };
+    acc.label = label; acc.hrs = Math.round((acc.hrs + rep.hrs) * 10) / 10; acc.days++;
+    rep.inj.forEach(function (x) { acc.inj.push(x); });
+    for (var gk in rep.groups) {
+      var arr = acc.groups[gk] || (acc.groups[gk] = []), idx = {};
+      arr.forEach(function (r, i) { idx[r.id] = i; });
+      rep.groups[gk].forEach(function (r) {
+        var a = idx[r.id] != null ? arr[idx[r.id]] : null;
+        if (!a) { a = { id: r.id, d: 0, atm: {}, fat: 0, inj: 0, f: 0 }; arr.push(a); }
+        if (!a.atm) { a.atm = {}; (a.at || []).forEach(function (x) { a.atm[x[0]] = x[1]; }); }
+        a.d = Math.round((a.d + r.d) * 1000) / 1000; a.fat = r.fat; a.inj = a.inj || r.inj; a.f = r.f;
+        r.at.forEach(function (x) { a.atm[x[0]] = (a.atm[x[0]] || 0) + x[1]; });
+      });
+      arr.forEach(function (a) { var at = []; for (var k in a.atm) at.push([k, Math.round(a.atm[k] * 100) / 100]); at.sort(function (x, y) { return Math.abs(y[1]) - Math.abs(x[1]); }); a.at = at.slice(0, 3); });
+      arr.sort(function (a, b) { return b.d - a.d; });
+    }
+    return acc;
+  }
+  function restDay(G, ab, isUser, label) {
+    var rep = isUser ? { season: G.season, label: label, groups: {}, inj: [], hrs: 0, off: 1 } : null;
+    teamPlayers(G, ab).forEach(function (p) { p.fat = (p.fat || 0) * FAT_REST; p.mor = clamp(p.mor + .3, 0, 100); });
+    return rep;
+  }
+  function slimRep(rep) { if (!rep) return rep; for (var gk in rep.groups) rep.groups[gk].forEach(function (a) { delete a.atm; }); return rep; }
+  // one camp day for the whole league
+  E.campSimDay = function (G, auto) {
+    var C = G.camp; if (!C || G.phase !== 'camp') return { stop: 'none' };
+    var i = C.day, d = C.days[i]; if (!d) return { stop: 'none' };
+    if (d.t === 'cut') return { stop: 'cut' };
+    if (d.t === 'game') {
+      if (!auto) return { stop: 'game' };
+      var g = E.campGame(G);
+      if (g) { var gs = E.quickSim(G, g.h, g.a, false, false, E.gameOpts(G, g)); return { game: campRecord(G, gs) }; }
+      // bye in the preseason (odd case): just sim the league games
+      (C.ps[PS_DAYS.indexOf(i)] || []).forEach(function (x) { if (x.hs !== null) return; var s2 = E.quickSim(G, x.h, x.a, false, false, { pre: true, sq: {} }); E.finalizeGame(G, s2, x); });
+      d.done = 1; campAdvanceDay(G); return {};
+    }
+    var me = G.user.ab, label = 'Camp Day ' + (i + 1) + ' · ' + E.dateLabel(campDate(G, i)) + ' · ' + DAY_T[d.t].n, key = G.season + ':' + Math.floor(i / 7), rep = null;
+    G.order.forEach(function (ab) {
+      var u = ab === me, t = u ? d.t : defaultType(i);
+      if (t === 'game' || t === 'cut') t = 'walk';
+      var r;
+      if (t === 'off') r = restDay(G, ab, u, label);
+      else r = runPractice(G, ab, u ? dayPlan(G, d) : aiPlanCached(G, ab, key), u ? G.user.dev : 50, u, dailyOpts(DAY_T[t], label, 1));
+      if (u) rep = r;
+    });
+    rep.type = d.t; rep.day = i;
+    C.last = rep; C.agg = aggRep(C.agg, rep, 'Training camp to date (' + (i + 1) + ' days)');
+    G.user.prac = C.agg;
+    var all = []; for (var k in C.agg.groups) C.agg.groups[k].forEach(function (r) { if (k !== 'ST') all.push({ id: r.id, d: r.d }); });
+    all.sort(function (a, b) { return b.d - a.d; }); G.user.lastReport = all.slice(0, 8);
+    if (rep.inj.length) addNews(G, 'Camp injur' + (rep.inj.length > 1 ? 'ies' : 'y') + ' (' + E.dateLabel(campDate(G, i)) + '): ' + rep.inj.map(function (x) { var p = G.players[x.id]; return p.pos + ' ' + p.ln + ' (' + x.w + ' wk)'; }).join(', ') + '.', 'loss');
+    d.done = 1; campAdvanceDay(G);
+    slimRep(C.agg);
+    return { rep: rep };
+  };
+  // Sim forward: n days, stopping at the next preseason game or cutdown so the coach can decide
+  E.campSim = function (G, n, toGame) {
+    var c = 0, r = {};
+    while (c < (n || 99) && G.phase === 'camp') {
+      var d = G.camp.days[G.camp.day]; if (!d || d.t === 'cut' || d.t === 'game') { r.stop = d ? d.t : 'none'; break; }
+      E.campSimDay(G); c++;
+      if (toGame) { var d2 = G.camp.days[G.camp.day]; if (d2 && (d2.t === 'game' || d2.t === 'cut')) { r.stop = d2.t; break; } }
+    }
+    r.days = c; return r;
+  };
+  E.setDayType = function (G, i, t) {
+    var C = G.camp; if (!C || !C.days[i] || C.days[i].done || i < C.day) return 'That day is already done.';
+    if (C.days[i].t === 'game' || C.days[i].t === 'cut') return 'Preseason games and cutdown day are fixed.';
+    if (!DAY_T[t] || t === 'game' || t === 'cut') return 'Unknown session.';
+    C.days[i].t = t; return '';
+  };
+  // ---------- cutdown ----------
+  E.cutScore = function (G, p) {
+    return wovr(p) + campBonus(p) * .9 + (p.age <= 24 ? Math.max(0, p.pot - p.ovr) * .28 : p.age >= 31 ? -1.5 : 0) - (p.inj >= 4 ? 2.5 : 0) + (p.sal >= 4000 ? 3 : p.sal >= 2000 ? 1.5 : 0) + (p.rookie && /R[1-3] /.test(p.draft || '') ? 4 : 0);
+  };
+  E.staffCuts = function (G, ab, n) {
+    n = n || 53;
+    var ps = teamPlayers(G, ab); if (ps.length <= n) return [];
+    var sc = {}; ps.forEach(function (p) { sc[p.id] = E.cutScore(G, p); });
+    ps.sort(function (a, b) { return sc[b.id] - sc[a.id]; });
+    var cnt = {}, keep = {}, kept = 0, cut = [];
+    ps.forEach(function (p) { if ((cnt[p.pos] || 0) < (ROSTER_MIN[p.pos] || 0)) { keep[p.id] = 1; kept++; cnt[p.pos] = (cnt[p.pos] || 0) + 1; } });
+    ps.forEach(function (p) { if (keep[p.id]) return; var c = cnt[p.pos] || 0, cap = { K: 1, P: 1, LS: 1, QB: 3 }[p.pos]; if (kept < n && !(cap && c >= cap)) { keep[p.id] = 1; kept++; cnt[p.pos] = c + 1; } else cut.push(p.id); });
+    return cut;
+  };
+  E.cutDead = function (G, p) { return (p.sal || 0) > 1500 ? E.deadCap(p) : 0; };
+  function cutPlayer(G, p, ab) {
+    var dc = E.cutDead(G, p);
+    G.teams[ab].dead = (G.teams[ab].dead || 0) + dc;
+    p.tm = 'FA'; p.sal = 0; p.yrs = 0; p.block = 0; p.tradeReq = 0; p.lastTm = ab; p.mor = clamp(p.mor - 10, 0, 100);
+    return dc;
+  }
+  E.cutdownCheck = function (G, ids) {
+    var me = G.user.ab, set = {}; (ids || []).forEach(function (id) { set[id] = 1; });
+    var keep = teamPlayers(G, me).filter(function (p) { return !set[p.id]; }), cnt = {};
+    keep.forEach(function (p) { cnt[p.pos] = (cnt[p.pos] || 0) + 1; });
+    var short = []; for (var pos in ROSTER_MIN) if ((cnt[pos] || 0) < ROSTER_MIN[pos]) short.push(pos + ' ' + (cnt[pos] || 0) + '/' + ROSTER_MIN[pos]);
+    var dead = 0; (ids || []).forEach(function (id) { var p = G.players[id]; if (p) dead += E.cutDead(G, p); });
+    return { keep: keep.length, over: Math.max(0, keep.length - 53), short: short, dead: dead, cnt: cnt };
+  };
+  E.cutdown = function (G, ids) {
+    if (G.phase !== 'camp' || !G.camp || G.camp.days[G.camp.day].t !== 'cut') return { ok: false, msg: 'Cutdown day has not arrived yet.' };
+    var me = G.user.ab; ids = (ids || []).filter(function (id) { return G.players[id] && G.players[id].tm === me; });
+    var chk = E.cutdownCheck(G, ids);
+    if (chk.over > 0) return { ok: false, msg: 'You still need to cut ' + chk.over + ' more player' + (chk.over > 1 ? 's' : '') + ' to get to 53.' };
+    var mine = ids.map(function (id) { return G.players[id]; }), dead = 0, allCuts = [];
+    mine.forEach(function (p) { dead += cutPlayer(G, p, me); allCuts.push(p); });
+    G.phase = 'regular'; // from here the full 53-man cap and roster rules apply
+    G.order.forEach(function (ab) {
+      if (ab === me) return;
+      E.staffCuts(G, ab, 53).forEach(function (id) { var p = G.players[id]; cutPlayer(G, p, ab); allCuts.push(p); });
+      var c = 0; while (E.capUsed(G, ab) > G.cap && c++ < 10) { var x = teamPlayers(G, ab).filter(function (p) { return p.sal > 2500; }).sort(function (a, b) { return (a.ovr / a.sal) - (b.ovr / b.sal); })[0]; if (!x) break; cutPlayer(G, x, ab); allCuts.push(x); }
+    });
+    // waiver claims: AI teams grab cuts who beat their worst player at the spot
+    var claims = [];
+    G.order.slice().sort(function () { return rnd() - .5; }).forEach(function (ab) {
+      if (ab === me) return;
+      for (var t = 0; t < 2; t++) {
+        var best = null, gain = 2.5, drop = null;
+        allCuts.forEach(function (p) {
+          if (p.tm !== 'FA' || p.lastTm === ab || p.ovr < 62) return;
+          var w = teamPlayers(G, ab).filter(function (q) { return q.pos === p.pos; }).sort(function (a, b) { return E.cutScore(G, a) - E.cutScore(G, b); })[0];
+          if (!w) return; var gn = E.cutScore(G, p) - E.cutScore(G, w);
+          if (gn > gain) { gain = gn; best = p; drop = w; }
+        });
+        if (!best) break;
+        var sal = Math.max(900, Math.round(marketValue(best) * .55 / 50) * 50);
+        if (E.capSpace(G, ab) < sal + 800) break;
+        cutPlayer(G, drop, ab); allCuts.push(drop);
+        best.tm = ab; best.sal = sal; best.yrs = 1; best.lastTm = undefined; claims.push(best.pos + ' ' + best.ln + ' (' + ab + ')');
+      }
+    });
+    // keep the free-agent pool a sensible size: drop camp bodies and long shots
+    var fas = faList(G).filter(function (p) { return !(p.lastTm === me && p.ovr >= 52); });
+    fas.forEach(function (p, i) { if ((p.cb && p.ovr < 57) || p.ovr < 50 || i >= 420) delete G.players[p.id]; });
+    G.order.forEach(function (ab) {
+      if (ab === me) { syncDepth(G, ab); return; }
+      aiFillMin(G, ab);
+      // stay under the cap: swap an overpaid veteran for a minimum-salary player at his spot
+      var c2 = 0;
+      while (E.capUsed(G, ab) > G.cap && c2++ < 12) {
+        var x = teamPlayers(G, ab).filter(function (p) { return p.sal > 1500; }).sort(function (a, b) { return (a.ovr / a.sal) - (b.ovr / b.sal); })[0]; if (!x) break;
+        var pos = x.pos; cutPlayer(G, x, ab); allCuts.push(x);
+        var rp = faList(G).filter(function (p) { return p.pos === pos; })[0]; if (rp) { rp.tm = ab; rp.sal = 900; rp.yrs = 1; rp.lastTm = undefined; }
+      }
+      E.campDepth(G, ab);
+    });
+    if (E.capUsed(G, me) > G.cap) addNews(G, 'Warning: you are ' + fmtM(E.capUsed(G, me) - G.cap) + ' over the salary cap after cutdown. Release or trade salary.', 'loss');
+    var notable = allCuts.filter(function (p) { return G.players[p.id] && p.tm === 'FA'; }).sort(function (a, b) { return b.ovr - a.ovr; }).slice(0, 5);
+    addNews(G, 'Cutdown day: ' + mine.length + ' players released, the ' + G.teams[me].name + ' are set at ' + teamPlayers(G, me).length + (dead ? ' (' + fmtM(dead) + ' dead cap)' : '') + '. Around the league: ' + allCuts.length + ' cuts. Notable: ' + notable.map(function (p) { return p.pos + ' ' + p.fn + ' ' + p.ln + ' (' + p.ovr + ', ex-' + p.lastTm + ')'; }).join(', ') + '.' + (claims.length ? ' Waiver claims: ' + claims.slice(0, 5).join(', ') + '.' : ''), 'big');
+    E.finishCamp(G);
+    return { ok: true, cut: mine.length, dead: dead, claims: claims.length, msg: 'Cutdown complete: ' + mine.length + ' released. Roster set at ' + teamPlayers(G, me).length + '.' };
+  };
+  E.finishCamp = function (G) {
+    var C = G.camp, me = G.user.ab;
+    G.phase = 'regular'; G.week = 1;
+    G.campLast = { season: C.season, res: C.res, open: C.open };
+    G.camp = null; _aiPlans = { key: '', p: {} };
+    for (var id in G.players) { var p = G.players[id]; if (p.tm === 'FA' || p.tm === 'DRAFT') { delete p.cmp; delete p.pst; } else if (p.cmp) { p.cmp.ps = Math.round(p.cmp.ps * 10) / 10; } }
+    G.user.prac = C.agg; G.user.wk = null;
+    addNews(G, 'Week 1 is here: the ' + G.season + ' opener is ' + E.dateLabel(E.openerDate(G), true) + '.', 'big');
+    E.newWeeklyEvent(G);
+  };
+  // Hands-off path (tests, and the "Sim camp" fast path): play every day, preseason games with the current playing-time choice, then the staff's cuts
+  E.campAuto = function (G) {
+    var g = 0;
+    while (G.phase === 'camp' && g++ < 80) {
+      var d = G.camp.days[G.camp.day];
+      if (d.t === 'cut') { var r = E.cutdown(G, E.staffCuts(G, G.user.ab, 53)); if (!r.ok) break; }
+      else E.campSimDay(G, true);
+    }
+    return G.phase;
+  };
+  // ---------- in-season day-by-day practice ----------
+  var WK_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], WK_DEF = ['off', 'off', 'pad', 'pad', 'np', 'walk'];
+  E.WK_NAMES = WK_NAMES; E.WK_DEF = WK_DEF;
+  function ensureWk(G) { var w = G.user.wk; if (!w || w.s !== G.season || w.w !== G.week) { G.user.wk = w = { s: G.season, w: G.week, d: 0, t: WK_DEF.slice(), plans: {}, agg: null, last: null }; } return w; }
+  E.weekDays = ensureWk;
+  E.setWeekDayType = function (G, i, t) { var w = ensureWk(G); if (i < w.d) return 'That day is done.'; if (!DAY_T[t] || t === 'game' || t === 'cut') return 'Unknown session.'; w.t[i] = t; return ''; };
+  E.simWeekDay = function (G) {
+    if (G.phase !== 'regular' || !G.user.daily) return null;
+    var w = ensureWk(G); if (w.d >= 6) return null;
+    var me = G.user.ab, t = w.t[w.d], label = 'Week ' + G.week + ' · ' + WK_NAMES[w.d] + ' · ' + DAY_T[t].n, rep;
+    if (t === 'off') rep = restDay(G, me, true, label);
+    else rep = runPractice(G, me, w.plans[w.d] ? dayPlan(G, { plan: w.plans[w.d] }) : G.user.plan, G.user.dev, true, dailyOpts(DAY_T[t], label));
+    rep.type = t; rep.day = w.d;
+    w.last = rep; w.agg = aggRep(w.agg, rep, 'Week ' + G.week + ' practice (day by day)');
+    slimRep(w.agg);
+    G.user.prac = w.agg;
+    if (rep.inj.length) addNews(G, 'Practice injur' + (rep.inj.length > 1 ? 'ies' : 'y') + ' (' + WK_NAMES[w.d] + '): ' + rep.inj.map(function (x) { var p = G.players[x.id]; return p.pos + ' ' + p.ln + ' (' + x.w + ' wk)'; }).join(', ') + '.', 'loss');
+    w.d++;
+    if (w.d >= 6) {
+      teamPlayers(G, me).forEach(function (p) { if (!p.dh) p.dh = []; p.dh.push(Math.round(wovr(p) * 10) / 10); if (p.dh.length > 24) p.dh.shift(); });
+      var all = []; for (var k in w.agg.groups) w.agg.groups[k].forEach(function (r) { if (k !== 'ST') all.push({ id: r.id, d: r.d }); });
+      all.sort(function (a, b) { return b.d - a.d; }); G.user.lastReport = all.slice(0, 8);
+      G.user.plan.fp = G.user.plan.fp.filter(function (id) { return G.players[id] && G.players[id].tm === me; });
+    }
+    return rep;
+  };
+  E.finishWeekDays = function (G) { if (G.phase !== 'regular' || !G.user.daily) return; var g = 0; while (ensureWk(G).d < 6 && g++ < 8) E.simWeekDay(G); };
+
   return E;
 })();
 if (typeof module !== 'undefined') module.exports = HC;

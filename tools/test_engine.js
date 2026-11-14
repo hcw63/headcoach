@@ -1,9 +1,46 @@
 const D=require('../src/data.js'), HC=require('../src/engine.js');
 const user=process.argv[2]||'KC';
-let G=HC.newLeague(D,user,'Test Coach');
-function playSeason(){
+let G=HC.newLeague(D,user,'Test Coach',{camp:true});
+function runCamp(tag){
+ if(G.phase!=='camp') throw new Error(tag+': expected camp, got '+G.phase);
+ const C=G.camp, me=user;
+ const n0=HC.teamPlayers(G,me).length, mx=Math.max(...G.order.map(a=>HC.teamPlayers(G,a).length));
+ if(mx>90) throw new Error('camp roster over 90');
+ if(C.ps.length!==3||C.ps.some(w=>w.length!==16)) throw new Error('bad preseason schedule');
+ C.ps.forEach(w=>w.forEach(g=>{ if(G.teams[g.h].div===G.teams[g.a].div) throw new Error('division preseason game'); }));
+ const myPS=C.ps.map(w=>w.find(g=>g.h===me||g.a===me)).map(g=>g.h===me?'vs '+g.a:'@ '+g.h);
+ // coach choices: a rest day, a walkthrough, custom day plan, playing time
+ if(HC.setDayType(G,3,'off')) throw new Error('setDayType failed'); HC.setDayType(G,4,'walk');
+ C.days[6].plan=JSON.parse(JSON.stringify(G.user.plan)); C.days[6].plan.int.QB='hard'; C.days[6].plan.hrs.QB=6;
+ if(!HC.setDayType(G,14,'pad')) throw new Error('game day type should be locked');
+ const w0={}; HC.teamPlayers(G,me).forEach(p=>w0[p.id]=HC.wovr(p));
+ let sqs=[1,2,0], k=0, sims=0;
+ while(G.phase==='camp'&&G.camp.days[G.camp.day].t!=='cut'&&sims++<60){
+   const d=G.camp.days[G.camp.day];
+   if(d.t==='game'){ G.camp.sq=sqs[k++]; const g=HC.userGame(G); if(!g) throw new Error('no preseason game'); const gs=HC.quickSim(G,g.h,g.a,false,false,HC.gameOpts(G,g)); HC.recordUserGame(G,gs); }
+   else { const r=HC.campSim(G,7); if(!r.days&&!r.stop) throw new Error('camp sim stalled'); }
+ }
+ const tm=G.teams[me]; if(tm.w||tm.l||tm.t) throw new Error('preseason counted in standings');
+ if(Object.values(G.players).some(p=>p.tm!=='FA'&&p.st&&p.st.gp)) throw new Error('preseason stats leaked into season stats');
+ const res=G.camp.res.map(r=>(r.home?'vs ':'@ ')+r.opp+' '+r.us+'-'+r.them+' (starters Q'+r.sq+')');
+ const gain=HC.avg(HC.teamPlayers(G,me).filter(p=>w0[p.id]!=null).map(p=>HC.wovr(p)-w0[p.id]));
+ const bt=HC.battles(G,me).map(b=>b.spot+': '+G.players[b.lead].ln+' vs '+G.players[b.chase].ln);
+ const bad=HC.cutdown(G,[]); if(bad.ok) throw new Error('cutdown allowed without cuts');
+ const cuts=HC.staffCuts(G,me,53); const chk=HC.cutdownCheck(G,cuts);
+ const r=HC.cutdown(G,cuts); if(!r.ok) throw new Error('cutdown failed '+r.msg);
+ if(G.phase!=='regular'||G.week!==1) throw new Error('not in week 1 after cutdown');
+ const sizes=G.order.map(a=>HC.teamPlayers(G,a).length);
+ if(Math.max(...sizes)>53) throw new Error('roster over 53 after cutdown');
+ if(!cuts.every(id=>!G.players[id]||G.players[id].tm!==me)) throw new Error('cut player still on roster'); const claimed=cuts.filter(id=>G.players[id]&&G.players[id].tm!=='FA').length;
+ const over=G.order.filter(a=>HC.capUsed(G,a)>G.cap).map(a=>a+' '+HC.fmtM(HC.capUsed(G,a)-G.cap)+' over, roster '+HC.teamPlayers(G,a).length+' dead '+HC.fmtM(G.teams[a].dead||0)); if(over.filter(x=>x.slice(0,user.length+1)!==user+' ').length) throw new Error('AI cap broken after cutdown: '+over.join('; ')); if(over.length) console.log('  note: user over the cap after cutdown',over.join('; '));
+ console.log(tag,'CAMP: roster',n0,'-> 53, PS',myPS.join(', '),'| results',res.join('; '),'| camp OVR gain',gain.toFixed(2),'| battles',bt.slice(0,3).join('; '),'| cut',r.cut,'dead',HC.fmtM(r.dead),'claims',r.claims,'(of ours',claimed+')','| rosters',Math.min(...sizes)+'-'+Math.max(...sizes),'| FA pool',HC.faList(G).length);
+}
+runCamp('S1');
+function playSeason(daily){
  let tot={pts:0,g:0,ties:0};
+ G.user.daily=daily?1:0;
  for(let w=1;w<=18;w++){
+  if(daily&&w%2===0){ HC.setWeekDayType(G,2,'np'); HC.setWeekDayType(G,3,'pad'); HC.simWeekDay(G); HC.simWeekDay(G); HC.simWeekDay(G); if(G.user.wk.d!==3) throw new Error('week days not advancing'); }
   const ev=G.user.pendingEvent; if(ev) HC.applyChoice(G,ev,w%ev.ch.length);
   // vary the position practice plan
   const pl=G.user.plan; HC.PGROUPS.forEach((g,i)=>{ pl.int[g.k]=['light','normal','hard'][(w+i)%3]; pl.drill[g.k]=g.drills[(w+i)%g.drills.length][0]; });
@@ -47,11 +84,13 @@ function playSeason(){
  G.dclass.slice(0,20).forEach(id=>HC.scout(G,G.players[id]));
  let n=0; while(G.phase==='draft'&&n++<400){ HC.simDraftToUser(G); if(G.phase!=='draft')break; const best=G.dclass.find(id=>G.players[id].tm==='DRAFT'); HC.draftPlayer(G,best); }
  console.log('after draft phase',G.phase,'user roster',HC.teamPlayers(G,user).length, 'top 3 picks', G.draft.order.slice(0,3).map(o=>o.ab+':'+G.players[o.pid].pos+' '+G.players[o.pid].ovr));
- const r=HC.newSeason(G); console.log('new season',G.season,'left',r.left.length,'retired',r.retired.length,'roster',HC.teamPlayers(G,user).length,'cap used',HC.fmtM(HC.capUsed(G,user)),'min roster',Math.min(...G.order.map(a=>HC.teamPlayers(G,a).length)),'max',Math.max(...G.order.map(a=>HC.teamPlayers(G,a).length)));
+ const r=HC.newSeason(G); console.log('new season',G.season,'phase',G.phase,'left',r.left.length,'retired',r.retired.length,'camp roster',HC.teamPlayers(G,user).length,'cap used (top 51)',HC.fmtM(HC.capUsed(G,user)),'min roster',Math.min(...G.order.map(a=>HC.teamPlayers(G,a).length)),'max',Math.max(...G.order.map(a=>HC.teamPlayers(G,a).length)), 'saveKB in camp',Math.round(JSON.stringify(G).length/1024));
+ runCamp('S'+G.season);
 }
-playSeason();
+playSeason(true);
 const s=JSON.stringify(G); console.log('save size KB',(s.length/1024).toFixed(0));
-G=JSON.parse(s); playSeason();
+G=JSON.parse(s); playSeason(false);
+G=JSON.parse(JSON.stringify(G)); playSeason(true);
 // practice planner sanity: drill focus grows targeted attributes faster
 {
  const G2=HC.newLeague(D,'DET','Drill Test'); const qbs=HC.teamPlayers(G2,'DET'); const pl=G2.user.plan;

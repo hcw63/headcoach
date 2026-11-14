@@ -223,3 +223,43 @@ input[type=range]{width:100%;accent-color:var(--acc)}
 .offer{background:#0f1726;border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px}
 @media (max-width:1100px){.tgrid{grid-template-columns:1fr 1fr}.tmid{grid-column:1/3;position:static;order:-1}}
 .modal .mf{flex-wrap:wrap}
+/* ---- training camp ---- */
+.camphd h2{font-family:var(--cond);font-size:26px;text-transform:uppercase;letter-spacing:.02em}
+.simbar .btn.big{min-height:50px}
+.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+.cdh{font-size:11px;font-weight:800;color:var(--mut);text-transform:uppercase;letter-spacing:.08em;text-align:center;padding:2px 0}
+.cd{position:relative;min-height:74px;border-radius:12px;border:1px solid var(--line);background:#0f1726;padding:6px 6px 5px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:1px;transition:transform .12s,border-color .12s;-webkit-tap-highlight-color:transparent;user-select:none}
+.cd:active{transform:scale(.96)}
+.cd.blank{background:transparent;border-color:transparent;cursor:default}
+.cd .cdn{font-size:11px;font-weight:700;color:#9fb0c9;align-self:flex-start}
+.cd .cdi{font-size:19px;line-height:1.1}
+.cd .cdt{font-size:10.5px;font-weight:700;color:#cbd5e1;text-align:center;line-height:1.1}
+.cd .cdo{font-size:10.5px;font-weight:800;color:var(--gold)}
+.cd .cdr{font-size:10.5px;font-weight:800}
+.cd .cdk{position:absolute;top:4px;right:6px;font-size:11px;color:#86efac;font-weight:900}
+.cd .cdp{position:absolute;bottom:4px;right:6px;font-size:11px;color:#c4b5fd}
+.cd.t-pad{background:linear-gradient(180deg,#2a1717,#1a1111)}
+.cd.t-np{background:linear-gradient(180deg,#14223a,#101a2b)}
+.cd.t-walk{background:linear-gradient(180deg,#14281f,#0f1d17)}
+.cd.t-off{background:#0c121d;opacity:.9}
+.cd.t-game{background:linear-gradient(180deg,#3a2c0c,#221a08);border-color:#6b5414}
+.cd.t-cut{background:linear-gradient(180deg,#3b1020,#220a13);border-color:#7f1d3a}
+.cd.t-wk1{background:linear-gradient(180deg,#0f2e2a,#0a1d1b);border-color:#14532d;cursor:default}
+.cd.done{opacity:.55}
+.cd.cur{border:2px solid var(--gold);box-shadow:0 0 0 3px rgba(234,179,8,.18);opacity:1}
+.cd.sel{outline:2px solid var(--acc);outline-offset:1px}
+.wstrip{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+.wstrip .wd{position:relative;min-height:70px;border-radius:12px;border:1px solid var(--line);background:#0f1726;padding:6px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:2px;-webkit-tap-highlight-color:transparent;user-select:none}
+.wstrip .wd .cdn{font-size:11px;font-weight:800;color:#9fb0c9}.wstrip .wd .cdi{font-size:19px}.wstrip .wd .cdt{font-size:10.5px;font-weight:700;color:#cbd5e1;text-align:center}
+.wstrip .wd .cdk{position:absolute;top:4px;right:6px;font-size:11px;color:#86efac}.wstrip .wd .cdp{position:absolute;bottom:4px;right:6px;font-size:11px;color:#c4b5fd}
+.wstrip .wd.t-pad{background:linear-gradient(180deg,#2a1717,#1a1111)}.wstrip .wd.t-np{background:linear-gradient(180deg,#14223a,#101a2b)}.wstrip .wd.t-walk{background:linear-gradient(180deg,#14281f,#0f1d17)}.wstrip .wd.t-game{background:linear-gradient(180deg,#3a2c0c,#221a08);border-color:#6b5414;cursor:default}
+.wstrip .wd.done{opacity:.55}.wstrip .wd.cur{border:2px solid var(--gold);opacity:1}
+.gsetup .sqseg{display:flex;width:100%}.gsetup .sqseg button{flex:1;padding:0 8px}
+.mini{background:#0f1726;border:1px solid var(--line);border-radius:10px;padding:8px 10px}.mini span{display:block;font-size:11px;color:var(--mut);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em}
+.qrow{display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid #1a2436;font-size:12.5px}.qrow b{width:26px}
+.cgr{font-family:var(--cond)}.cgr.g-A{color:#86efac}.cgr.g-B{color:#93c5fd}.cgr.g-C{color:#fde68a}.cgr.g-D{color:#fca5a5}
+.pchip{display:inline-flex;gap:5px;align-items:center;padding:5px 9px;border-radius:9px;background:#121b2b;border:1px solid var(--line);font-size:12px;color:#b5c3da}.pchip b{color:#fff}.pchip.short{border-color:#b45309;background:#2a1a08;color:#fdba74}
+table.cut td{vertical-align:middle}table.cut tr.cutm td{background:rgba(127,29,29,.18)}table.cut tr.cutm td b{color:#fca5a5}
+.btn.kc{min-width:86px;min-height:40px}
+.dayedit{border-color:#4c1d95;background:linear-gradient(180deg,#1b1530,#121a2b);margin-bottom:12px}
+@media (max-width:1250px){.cd{min-height:66px}.cd .cdt{font-size:9.5px}}

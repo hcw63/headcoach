@@ -5,7 +5,8 @@
   function Y(y) { return y * PPY; }
   function startGame() {
     var g = HC.userGame(G); if (!g || g.hs !== null) return;
-    S.gs = HC.newGame(G, g.h, g.a, { playoff: G.phase === 'playoffs', neutral: g.neutral });
+    if (G.phase === 'regular' && G.user.daily) HC.finishWeekDays(G);
+    S.gs = HC.newGame(G, g.h, g.a, HC.gameOpts(G, g));
     S.st0 = {};
     [g.h, g.a].forEach(function (ab) { HC.teamPlayers(G, ab).forEach(function (p) { S.st0[p.id] = JSON.parse(JSON.stringify(p.st || {})); }); });
     S.pbpSeen = 0; S.busy = false; S.gameTab = 'pbp'; S.lastCall = null;
@@ -14,7 +15,7 @@
   }
   function vGame() {
     var gs = S.gs, H = G.teams[gs.home], A_ = G.teams[gs.away];
-    var label = G.phase === 'playoffs' ? HC.roundName(G.playoffs.round) : 'Week ' + G.week;
+    var label = G.phase === 'playoffs' ? HC.roundName(G.playoffs.round) : G.phase === 'camp' ? 'Preseason Week ' + (HC.campWeek(G) + 1) + ' · starters: ' + ['sit', 'Q1', 'first half', 'three quarters', 'whole game'][G.camp.sq] : 'Week ' + G.week;
     return '<div class="gd"><div class="row" style="margin-bottom:10px"><span class="pill">🏈 ' + label + ' · ' + G.season + '</span><span class="pill">' + (gs.playoff && G.playoffs.round === 3 ? 'Neutral site' : esc(H.city)) + '</span><span class="sp"></span><span class="mut" style="font-size:12px">Animation</span><div class="chips">' + [[1, 'Normal'], [2, 'Fast'], [0, 'Off']].map(function (s) { return '<span class="chip' + (S.speed === s[0] ? ' on' : '') + '" data-act="speed" data-arg="' + s[0] + '">' + s[1] + '</span>'; }).join('') + '</div></div>' +
       '<div class="sbug" id="sbug"></div><div class="ddbar" id="ddbar"></div>' +
       '<div class="gdgrid"><div><div class="fieldwrap"><canvas id="field" width="' + FW + '" height="' + FH + '"></canvas><div class="flash" id="flash"></div><div id="finalOv"></div></div>' +
@@ -305,7 +306,8 @@
   function postGameFlow() {
     var press = G.user.pressPending;
     var after = function () {
-      if (G.phase === 'regular') { HC.advanceWeek(G); }
+      if (G.phase === 'camp') { S.campTab = 'pre'; S.campSel = G.camp.day; }
+      else if (G.phase === 'regular') { HC.advanceWeek(G); }
       else if (G.phase === 'playoffs') { HC.advancePlayoffs(G); }
       save(true); go('dash');
     };

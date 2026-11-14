@@ -26,11 +26,13 @@
     if (G.phase === 'draft') return vDraft();
     if (G.phase === 'offseason') return vOffseason();
     if (G.phase === 'freeagency') return VIEWS.fa();
+    if (G.phase === 'camp') return vCamp();
     var me = G.user.ab, T = G.teams[me], g = HC.userGame(G), h = '<div class="grid" style="grid-template-columns:1.5fr 1fr">';
     h += '<div class="col">';
     if (g && g.hs === null) h += matchupCard(g, 'Week ' + G.week + ' Matchup');
     else if (g) h += '<div class="card"><h3>Week ' + G.week + '</h3><p>Game complete.</p><button class="btn pri big" data-act="advance">Advance to Week ' + (G.week + 1) + ' →</button></div>';
     else h += '<div class="card"><div class="hd"><h3>Week ' + G.week + '</h3></div><h2>Bye Week</h2><p class="mut">No game this week. Your players rest (injuries heal) and practice continues.</p><button class="btn pri big" data-act="advance">Advance to Week ' + (G.week + 1) + ' →</button></div>';
+    h += weekStrip();
     // tasks
     var ev = G.user.pendingEvent; HC.migrate(G);
     h += '<div class="card"><div class="hd"><h3>This Week\'s Checklist</h3></div>';

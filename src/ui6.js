@@ -6,7 +6,7 @@
     about0: function () { document.body.insertAdjacentHTML('beforeend', '<div class="ov" id="ov"><div class="modal" style="width:min(940px,100%)"><div class="mb">' + aboutHtml() + '</div><div class="mf"><button class="btn" data-act="close">Close</button></div></div></div>'); },
     home: function () { go('title'); },
     pickteam: function (ab) { var i = $('#coachName'); if (i) S.coach = i.value; S.sel = ab; setTheme(ab); render(); },
-    start: function (ab) { var i = $('#coachName'), name = (i && i.value.trim()) || 'Coach'; G = HC.newLeague(HC_DATA, ab, name); tmpG = null; setTheme(ab); save(true); go('dash'); },
+    start: function (ab) { var i = $('#coachName'), name = (i && i.value.trim()) || 'Coach'; G = HC.newLeague(HC_DATA, ab, name, { camp: S.startCamp !== false }); tmpG = null; S.campTab = 'cal'; S.campSel = null; setTheme(ab); save(true); go('dash'); },
     nav: function (s) { go(s); },
     save: function () { save(); },
     event: function () { openEvent(G.user.pendingEvent, false); },
@@ -23,7 +23,8 @@
     play: function () { startGame(); },
     quicksim: function () {
       var g = HC.userGame(G); if (!g || g.hs !== null) return;
-      var gs = HC.quickSim(G, g.h, g.a, G.phase === 'playoffs', g.neutral);
+      if (G.phase === 'regular' && G.user.daily) HC.finishWeekDays(G);
+      var o = HC.gameOpts(G, g), gs = HC.quickSim(G, g.h, g.a, o.playoff, o.neutral, o);
       HC.recordUserGame(G, gs);
       var me = G.user.ab, o = HC.other(gs, me);
       toast((gs.sc[me] > gs.sc[o] ? '✅ Win! ' : gs.sc[me] < gs.sc[o] ? '❌ Loss. ' : 'Tie. ') + G.teams[me].name + ' ' + gs.sc[me] + ', ' + G.teams[o].name + ' ' + gs.sc[o], 3500);
@@ -51,19 +52,19 @@
     focus: function (k) { G.user.focus = k; render(); },
     intensity: function (k) { G.user.intensity = k; render(); },
     phrs: function (a) {
-      var x = a.split(':'), pl = G.user.plan, cur = pl.hrs[x[0]] || 0, nv = Math.max(0, Math.min(HC.MAX_HRS, cur + (+x[1])));
+      var x = a.split(':'), pl = curPlan(), cur = pl.hrs[x[0]] || 0, nv = Math.max(0, Math.min(HC.MAX_HRS, cur + (+x[1])));
       if (nv > cur && HC.planHours(pl) + (nv - cur) > HC.PRAC_BUDGET) { toast('Out of practice hours. Take hours from another group first.'); return; }
       pl.hrs[x[0]] = nv; save(true); render();
     },
-    pint: function (a) { var x = a.split(':'); G.user.plan.int[x[0]] = x[1]; save(true); render(); },
-    pdrill: function (a) { var x = a.split(':'); G.user.plan.drill[x[0]] = x[1]; save(true); render(); },
+    pint: function (a) { var x = a.split(':'); curPlan().int[x[0]] = x[1]; save(true); render(); },
+    pdrill: function (a) { var x = a.split(':'); curPlan().drill[x[0]] = x[1]; save(true); render(); },
     psess: function (k) {
-      var pl = G.user.plan;
+      var pl = curPlan();
       if (!pl[k] && HC.planHours(pl) + HC.SESSION_COST[k] > HC.PRAC_BUDGET) { toast('Needs ' + HC.SESSION_COST[k] + ' free hours. Take hours from a position group first.'); return; }
       pl[k] = pl[k] ? 0 : 1; save(true); render();
     },
-    pauto: function () { var old = G.user.plan, np = HC.autoPlan(G, G.user.ab); if (old.fp.length) np.fp = old.fp.slice(); np.gp = 0; np.cond = 0; G.user.plan = np; save(true); toast('📋 Staff plan loaded: hours go to your weakest units and young talent.'); render(); },
-    pbal: function () { var pl = G.user.plan; HC.PGROUPS.forEach(function (g) { pl.hrs[g.k] = g.def; pl.int[g.k] = 'normal'; pl.drill[g.k] = 'bal'; }); pl.gp = 0; pl.cond = 0; save(true); render(); },
+    pauto: function () { var old = G.user.plan, np = HC.autoPlan(G, G.user.ab), ref = curPlanRef(); if (old.fp.length) np.fp = old.fp.slice(); np.gp = 0; np.cond = 0; if (ref) ref.set(np); else G.user.plan = np; save(true); toast('📋 Staff plan loaded: hours go to your weakest units and young talent.'); render(); },
+    pbal: function () { var pl = curPlan(); HC.PGROUPS.forEach(function (g) { pl.hrs[g.k] = g.def; pl.int[g.k] = 'normal'; pl.drill[g.k] = 'bal'; }); pl.gp = 0; pl.cond = 0; save(true); render(); },
     pfocus: function (id) {
       HC.migrate(G); var fp = G.user.plan.fp, i = fp.indexOf(id), p = G.players[id];
       if (i >= 0) fp.splice(i, 1);
@@ -99,7 +100,7 @@
     newseason: function () {
       var exp = HC.expiring(G, G.user.ab).filter(function (p) { return p.ovr >= 70; });
       if (exp.length && !window.confirm(exp.length + ' players rated 70+ will leave in free agency (e.g. ' + exp.slice(0, 3).map(function (p) { return p.ln; }).join(', ') + '). Continue?')) return;
-      var r = HC.newSeason(G); save(true); go('dash'); toast('Welcome to ' + G.season + '! ' + r.left.length + ' left in FA, ' + r.retired.length + ' retired.', 4000);
+      var r = HC.newSeason(G); S.campTab = 'cal'; S.campSel = null; save(true); go('dash'); toast('🏕️ Training camp is open! ' + (r.left.length ? r.left.length + ' left in FA, ' : '') + r.retired.length + ' retired. Camp roster: ' + HC.teamPlayers(G, G.user.ab).length + '.', 4500);
     },
     speed: function (s) { S.speed = +s; document.querySelectorAll('[data-act=speed]').forEach(function (c) { c.classList.toggle('on', +c.dataset.arg === S.speed); }); },
     call: function (k) { doPlay(k); },
@@ -111,6 +112,7 @@
     export: function () { exportSave(); },
     loadsave: function () { if (load()) { go('dash'); toast('Save loaded'); } }
   };
+  for (var ck in CAMP_ACT) ACT[ck] = CAMP_ACT[ck];
   function negSubmit() {
     var n = S.neg, p = G.players[n.id], r = HC.offer(G, p, G.user.ab, n.sal, n.yrs);
     if (r.ok) { closeOv(); toast('✍️ ' + esc(r.msg), 3500); S.neg = null; save(true); render(); return; }

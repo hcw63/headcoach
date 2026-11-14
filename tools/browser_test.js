@@ -15,6 +15,7 @@ const { chromium } = require('playwright-core');
   await p.fill('#coachName', 'Howard Wentworth');
   await p.waitForTimeout(300);
   await p.screenshot({ path: 'shot_team_select.png' });
+  await p.click('[data-act=startmode][data-arg=wk1]'); await p.waitForTimeout(200);
   await p.click('[data-act=start]');
   await p.waitForTimeout(900);
   await p.screenshot({ path: 'shot_event.png' });
