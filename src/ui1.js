@@ -38,7 +38,7 @@ var UI = (function () {
     catch (e) { toast('Save failed: ' + e.message); }
   }
   function hasSave() { try { return !!localStorage.getItem(SAVE_KEY); } catch (e) { return false; } }
-  function load() { try { var s = localStorage.getItem(SAVE_KEY); if (!s) return false; G = JSON.parse(s); if (G.teams && G.teams.WSH && G.teams.WSH.name === 'Commanders') { G.teams.WSH.name = 'Redskins'; G.teams.WSH.c1 = '#773141'; } setTheme(G.user.ab); return true; } catch (e) { toast('Could not load save: ' + e.message); return false; } }
+  function load() { try { var s = localStorage.getItem(SAVE_KEY); if (!s) return false; G = JSON.parse(s); if (G.teams && G.teams.WSH && G.teams.WSH.name === 'Commanders') { G.teams.WSH.name = 'Redskins'; G.teams.WSH.c1 = '#773141'; } HC.migrate(G); setTheme(G.user.ab); return true; } catch (e) { toast('Could not load save: ' + e.message); return false; } }
   function exportSave() { var b = new Blob([JSON.stringify(G)], { type: 'application/json' }); var a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'headcoach26-' + G.user.ab + '-' + G.season + '.json'; a.click(); }
   function importSave(file) { var r = new FileReader(); r.onload = function () { try { G = JSON.parse(r.result); setTheme(G.user.ab); save(true); go('dash'); toast('Save imported'); } catch (e) { toast('Bad save file'); } }; r.readAsText(file); }
 

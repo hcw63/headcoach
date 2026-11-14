@@ -50,6 +50,29 @@
     dfilter: function (f) { S.draftFilter = f; render(); },
     focus: function (k) { G.user.focus = k; render(); },
     intensity: function (k) { G.user.intensity = k; render(); },
+    phrs: function (a) {
+      var x = a.split(':'), pl = G.user.plan, cur = pl.hrs[x[0]] || 0, nv = Math.max(0, Math.min(HC.MAX_HRS, cur + (+x[1])));
+      if (nv > cur && HC.planHours(pl) + (nv - cur) > HC.PRAC_BUDGET) { toast('Out of practice hours. Take hours from another group first.'); return; }
+      pl.hrs[x[0]] = nv; save(true); render();
+    },
+    pint: function (a) { var x = a.split(':'); G.user.plan.int[x[0]] = x[1]; save(true); render(); },
+    pdrill: function (a) { var x = a.split(':'); G.user.plan.drill[x[0]] = x[1]; save(true); render(); },
+    psess: function (k) {
+      var pl = G.user.plan;
+      if (!pl[k] && HC.planHours(pl) + HC.SESSION_COST[k] > HC.PRAC_BUDGET) { toast('Needs ' + HC.SESSION_COST[k] + ' free hours. Take hours from a position group first.'); return; }
+      pl[k] = pl[k] ? 0 : 1; save(true); render();
+    },
+    pauto: function () { var old = G.user.plan, np = HC.autoPlan(G, G.user.ab); if (old.fp.length) np.fp = old.fp.slice(); np.gp = 0; np.cond = 0; G.user.plan = np; save(true); toast('📋 Staff plan loaded: hours go to your weakest units and young talent.'); render(); },
+    pbal: function () { var pl = G.user.plan; HC.PGROUPS.forEach(function (g) { pl.hrs[g.k] = g.def; pl.int[g.k] = 'normal'; pl.drill[g.k] = 'bal'; }); pl.gp = 0; pl.cond = 0; save(true); render(); },
+    pfocus: function (id) {
+      HC.migrate(G); var fp = G.user.plan.fp, i = fp.indexOf(id), p = G.players[id];
+      if (i >= 0) fp.splice(i, 1);
+      else { if (fp.length >= HC.FOCUS_MAX) { toast('You can have ' + HC.FOCUS_MAX + ' focus players. Remove one first.'); return; } if (!p || p.tm !== G.user.ab) return; fp.push(id); toast('⭐ ' + esc(p.ln) + ' gets extra 1-on-1 coaching'); }
+      save(true); if ($('#ov')) openPlayer(id); else render();
+    },
+    ptab: function (t) { S.pracTab = t; render(); },
+    pprog: function (k) { S.progFilter = k; render(); },
+    cfilter: function (k) { S.charFilter = k; render(); },
     scout: function (id) { var p = G.players[id], err = HC.scout(G, p); if (err) toast(err); var open = !!$('#ov'); if (open) openPlayer(id); else render(); },
     dpick: function (id) { if (HC.draftPlayer(G, id)) { var p = G.players[id]; closeOv(); toast('🎉 You drafted ' + p.pos + ' ' + esc(p.fn + ' ' + p.ln)); save(true); render(); } },
     dsim: function () { HC.simDraftToUser(G); save(true); render(); },

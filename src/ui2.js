@@ -31,10 +31,10 @@
     else if (g) h += '<div class="card"><h3>Week ' + G.week + '</h3><p>Game complete.</p><button class="btn pri big" data-act="advance">Advance to Week ' + (G.week + 1) + ' →</button></div>';
     else h += '<div class="card"><div class="hd"><h3>Week ' + G.week + '</h3></div><h2>Bye Week</h2><p class="mut">No game this week. Your players rest (injuries heal) and practice continues.</p><button class="btn pri big" data-act="advance">Advance to Week ' + (G.week + 1) + ' →</button></div>';
     // tasks
-    var ev = G.user.pendingEvent, F = FOCUS[G.user.focus];
+    var ev = G.user.pendingEvent; HC.migrate(G);
     h += '<div class="card"><div class="hd"><h3>This Week\'s Checklist</h3></div>';
     h += '<div class="task' + (ev ? ' need' : '') + '"><div class="ic">🗣️</div><div class="sp"><b>' + (ev ? esc(ev.title) : 'Team meeting handled') + '</b><div class="mut" style="font-size:12px">' + (ev ? 'A locker-room situation needs your decision.' : 'Culture decisions shape chemistry, discipline and development.') + '</div></div>' + (ev ? '<button class="btn pri sm" data-act="event">Decide</button>' : '<span class="good">✓</span>') + '</div>';
-    h += '<div class="task"><div class="ic">' + F.i + '</div><div class="sp"><b>Practice: ' + F.n + ' · ' + G.user.intensity.charAt(0).toUpperCase() + G.user.intensity.slice(1) + ' intensity</b><div class="mut" style="font-size:12px">' + F.d + '</div></div><button class="btn sm" data-act="nav" data-arg="practice">Change</button></div>';
+    h += '<div class="task"><div class="ic">🏋️</div><div class="sp"><b>Practice plan by position</b><div class="mut" style="font-size:12px">' + esc(planSummary()) + '</div></div><button class="btn sm" data-act="nav" data-arg="practice">Plan</button></div>';
     var unhappy = HC.teamPlayers(G, me).filter(function (p) { return p.mor < 45; }).length, exp = HC.teamPlayers(G, me).filter(function (p) { return p.yrs === 1 && p.ovr >= 75; }).length;
     h += '<div class="task"><div class="ic">😤</div><div class="sp"><b>' + unhappy + ' unhappy player' + (unhappy === 1 ? '' : 's') + '</b><div class="mut" style="font-size:12px">Low morale slows development and raises contract demands.</div></div><button class="btn sm" data-act="nav" data-arg="locker">View</button></div>';
     h += '<div class="task"><div class="ic">📝</div><div class="sp"><b>' + exp + ' key player' + (exp === 1 ? '' : 's') + ' in a contract year</b><div class="mut" style="font-size:12px">Extend them before they hit free agency after the season.</div></div><button class="btn sm" data-act="nav" data-arg="cap">Contracts</button></div>';
@@ -70,7 +70,7 @@
   var GROUPS = { ALL: null, OFF: HC.OFF, DEF: HC.DEF, ST: { K: 1, P: 1, LS: 1 } };
   function filterPos(p, f) { if (f === 'ALL') return true; if (GROUPS[f]) return !!GROUPS[f][p.pos]; return p.pos === f; }
   function sortList(list, key) {
-    var s = S.sort, get = { ovr: function (p) { return p.ovr; }, pot: function (p) { return p.pot; }, age: function (p) { return p.age; }, sal: function (p) { return p.sal; }, yrs: function (p) { return p.yrs; }, mor: function (p) { return p.mor; }, name: function (p) { return p.ln; }, pos: function (p) { return HC.POS_ORDER.indexOf(p.pos) * 100 - p.ovr; }, ask: function (p) { return p._ask || 0; }, prog: function (p) { return p.prog || 0; } }[s.k] || function (p) { return p.ovr; };
+    var s = S.sort, get = { ovr: function (p) { return p.ovr; }, pot: function (p) { return p.pot; }, age: function (p) { return p.age; }, sal: function (p) { return p.sal; }, yrs: function (p) { return p.yrs; }, mor: function (p) { return p.mor; }, name: function (p) { return p.ln; }, pos: function (p) { return HC.POS_ORDER.indexOf(p.pos) * 100 - p.ovr; }, ask: function (p) { return p._ask || 0; }, prog: function (p) { return p.prog || 0; }, eth: function (p) { return p.eth || 0; }, ldr: function (p) { return p.ldr || 0; }, clu: function (p) { return p.clu || 0; }, pers: function (p) { return Object.keys(HC.PERS).indexOf(p.pers); } }[s.k] || function (p) { return p.ovr; };
     return list.sort(function (a, b) { var x = get(a), y = get(b); return (x > y ? 1 : x < y ? -1 : 0) * s.d; });
   }
   function th(k, label) { return '<th data-act="sort" data-arg="' + k + '">' + label + (S.sort.k === k ? (S.sort.d < 0 ? ' ▼' : ' ▲') : '') + '</th>'; }
@@ -78,15 +78,18 @@
     var opts = ['ALL', 'OFF', 'DEF', 'ST'].concat(HC.POS_ORDER);
     return '<div class="chips">' + opts.map(function (o) { return '<span class="chip' + (cur === o ? ' on' : '') + '" data-act="' + act + '" data-arg="' + o + '">' + (o === 'ALL' ? 'All' : o === 'OFF' ? 'Offense' : o === 'DEF' ? 'Defense' : o === 'ST' ? 'Special Teams' : o) + '</span>'; }).join('') + '</div>';
   }
+  function cval(v) { if (v == null) return '<span class="dim">—</span>'; return '<b style="color:' + (v >= 80 ? '#86efac' : v >= 60 ? '#e8eef8' : v >= 45 ? '#fde68a' : '#fca5a5') + '">' + v + '</b>'; }
   function starterSet(ab) { var L = HC.lineup(G, ab), s = {}; for (var k in L) L[k].forEach(function (p) { s[p.id] = 1; }); return s; }
   function status(p) { var s = []; if (p.inj) s.push('<span class="tag" style="background:#4a1d24;color:#fecaca">INJ ' + p.inj + 'w</span>'); if (p.rookie || p.exp === 0) s.push('<span class="tag" style="background:#1d3a2a;color:#bbf7d0">ROOKIE</span>'); if (p.yrs === 1) s.push('<span class="tag" style="background:#3a2f12;color:#fde68a">CONTRACT YR</span>'); if (p.wantsSnaps) s.push('<span class="tag">WANTS SNAPS</span>'); if (!p.real) s.push('<span class="tag" title="Generated player">GEN</span>'); return s.join(' '); }
   VIEWS.roster = function () {
-    var me = G.user.ab, st = starterSet(me), list = sortList(HC.teamPlayers(G, me).filter(function (p) { return filterPos(p, S.rosterFilter); }));
+    var me = G.user.ab, st = starterSet(me); HC.teamPlayers(G, me).forEach(function (p) { HC.ensureP(G, p); });
+    var cf = S.charFilter || 'ANY', list = sortList(HC.teamPlayers(G, me).filter(function (p) { return filterPos(p, S.rosterFilter) && (cf === 'ANY' || HC.charTags(p).indexOf(cf) >= 0); }));
     var h = '<div class="row" style="margin-bottom:14px"><h2>Roster</h2><span class="pill">' + HC.teamPlayers(G, me).length + ' / ' + HC.rosterLimit(G) + ' players</span><span class="sp"></span><span class="mut" style="font-size:12px">Click a player for his card. Highlighted rows are starters.</span></div>' + chips(S.rosterFilter, 'rfilter');
-    h += '<div class="card flat" style="margin-top:14px"><div class="tw"><table class="t"><thead><tr><th>#</th>' + th('name', 'Player') + th('pos', 'Pos') + th('age', 'Age') + th('ovr', 'OVR') + th('pot', 'POT') + th('prog', 'Δ Season') + th('mor', 'Morale') + th('sal', 'Salary') + th('yrs', 'Yrs') + '<th>Status</th></tr></thead><tbody>';
+    h += '<div class="chips" style="margin-top:8px"><span class="dim" style="font-size:12px;align-self:center;margin-right:4px">Character:</span>' + [['ANY', 'Any'], ['Leader', '👑 Leaders'], ['Clutch', '🧊 Clutch'], ['Attitude', '⚠️ Attitude'], ['Grinder', '💪 Grinders'], ['Rattles', '😬 Rattles'], ['Lazy', '😴 Low effort']].map(function (o) { return '<span class="chip' + (cf === o[0] ? ' on' : '') + '" data-act="cfilter" data-arg="' + o[0] + '">' + o[1] + '</span>'; }).join('') + '</div>';
+    h += '<div class="card flat" style="margin-top:14px"><div class="tw"><table class="t"><thead><tr><th>#</th>' + th('name', 'Player') + th('pos', 'Pos') + th('age', 'Age') + th('ovr', 'OVR') + th('pot', 'POT') + th('prog', 'Δ Season') + th('mor', 'Morale') + th('pers', 'Character') + th('eth', 'Eth') + th('ldr', 'Ldr') + th('clu', 'Clu') + th('sal', 'Salary') + th('yrs', 'Yrs') + '<th>Status</th></tr></thead><tbody>';
     list.forEach(function (p) {
       var d = p.prog || 0;
-      h += '<tr class="cl' + (st[p.id] ? ' st' : '') + '" data-act="player" data-arg="' + p.id + '"><td class="dim">' + esc(p.num) + '</td><td><b>' + nm(p) + '</b></td><td><span class="tag">' + p.pos + '</span></td><td>' + p.age + '</td><td>' + ovr(p.ovr) + '</td><td>' + HC.potGrade(p.pot) + '</td><td class="' + (d > .05 ? 'good' : d < -.05 ? 'bad' : 'dim') + '">' + (d > 0 ? '+' : '') + d.toFixed(1) + '</td><td>' + morBar(p.mor) + '</td><td>' + fmtM(p.sal) + '</td><td>' + p.yrs + '</td><td>' + status(p) + '</td></tr>';
+      h += '<tr class="cl' + (st[p.id] ? ' st' : '') + '" data-act="player" data-arg="' + p.id + '"><td class="dim">' + esc(p.num) + '</td><td><b>' + nm(p) + '</b></td><td><span class="tag">' + p.pos + '</span></td><td>' + p.age + '</td><td>' + ovr(p.ovr) + '</td><td>' + HC.potGrade(p.pot) + '</td><td class="' + (d > .05 ? 'good' : d < -.05 ? 'bad' : 'dim') + '">' + (d > 0 ? '+' : '') + d.toFixed(1) + '</td><td>' + morBar(p.mor) + '</td><td>' + persBadge(p) + charTagsHtml(p) + '</td><td>' + cval(p.eth) + '</td><td>' + cval(p.ldr) + '</td><td>' + cval(p.clu) + '</td><td>' + fmtM(p.sal) + '</td><td>' + p.yrs + '</td><td>' + status(p) + '</td></tr>';
     });
     h += '</tbody></table></div></div>';
     return h;
@@ -108,31 +111,51 @@
   };
   // ---------- player card ----------
   function openPlayer(id) {
-    var p = G.players[id]; if (!p) return;
+    var p = G.players[id]; if (!p) return; HC.ensureP(G, p);
     var t = G.teams[p.tm] || { c1: '#334155', c2: '#94a3b8', name: p.tm === 'FA' ? 'Free Agent' : 'Draft Prospect', city: '' };
     var me = G.user.ab, mine = p.tm === me, isP = p.tm === 'DRAFT';
     var sv = isP ? HC.scoutView(p) : null;
     var h = '<div class="ov" id="ov"><div class="modal"><div class="pcard-top" style="--c1:' + t.c1 + '"><span class="num">' + esc(p.num || p.pos) + '</span>' +
       '<div class="bigovr"><b>' + (isP ? (sv.exact ? p.ovr : sv.lo + '-' + sv.hi) : p.ovr) + '</b><span>OVR</span></div><div style="position:relative;z-index:1"><div style="font-size:12px;opacity:.8;font-weight:700;letter-spacing:.1em;text-transform:uppercase">' + p.pos + ' · ' + esc(t.city + ' ' + t.name) + '</div><div style="font-family:var(--cond);font-size:38px;font-weight:900;text-transform:uppercase;line-height:1">' + nm(p) + '</div><div style="font-size:12.5px;opacity:.85;margin-top:4px">' + (p.real ? 'Real player' : 'Generated player') + ' · ' + esc(p.col || '—') + ' · ' + esc(p.draft || (isP ? 'Draft prospect' : '')) + '</div></div><button class="x" data-act="close">✕</button></div><div class="mb">';
     h += '<div class="kv"><div><span>Age</span><b>' + p.age + '</b></div><div><span>Experience</span><b>' + (p.exp === 0 ? 'Rookie' : p.exp + ' yrs') + '</b></div><div><span>Height / Weight</span><b>' + ht(p.ht) + ' · ' + p.wt + '</b></div><div><span>Potential</span><b>' + (isP ? sv.pot + (sv.exact ? '' : ' (est.)') : HC.potGrade(p.pot) + ' <span class="mut" style="font-size:12px">(' + p.pot + ')</span>') + '</b></div>';
-    if (!isP) h += '<div><span>Contract</span><b>' + (p.tm === 'FA' ? '—' : fmtM(p.sal) + ' × ' + p.yrs) + '</b></div><div><span>Market Value</span><b>' + fmtM(HC.marketValue(p)) + '</b></div><div><span>Morale</span><b style="color:' + chemColor(p.mor) + '">' + Math.round(p.mor) + '</b></div><div><span>Season Δ</span><b class="' + ((p.prog || 0) >= 0 ? 'good' : 'bad') + '">' + ((p.prog || 0) >= 0 ? '+' : '') + (p.prog || 0).toFixed(1) + '</b></div>';
+    if (!isP) h += '<div><span>Contract</span><b>' + (p.tm === 'FA' ? '—' : fmtM(p.sal) + ' × ' + p.yrs) + '</b></div><div><span>Market Value</span><b>' + fmtM(HC.marketValue(p)) + '</b></div><div><span>Morale</span><b style="color:' + chemColor(p.mor) + '">' + Math.round(p.mor) + '</b></div><div><span>Fatigue</span><b style="color:' + ((p.fat || 0) >= 45 ? '#fca5a5' : (p.fat || 0) >= 25 ? '#fde68a' : '#86efac') + '">' + Math.round(p.fat || 0) + '</b></div><div><span>Personality</span><b style="font-size:13px">' + (HC.PERS[p.pers] ? HC.PERS[p.pers].i + ' ' + HC.PERS[p.pers].n : '—') + '</b></div><div><span>Season Δ</span><b class="' + ((p.prog || 0) >= 0 ? 'good' : 'bad') + '">' + ((p.prog || 0) >= 0 ? '+' : '') + (p.prog || 0).toFixed(1) + '</b></div>';
     else h += '<div><span>40-yard dash</span><b>' + p.forty + 's</b></div><div><span>Media Rank</span><b>#' + p.media + '</b></div><div><span>Scouting Level</span><b>' + sv.lv + ' / 3</b></div><div><span>Status</span><b>' + (p.inj ? 'Injured' : 'Healthy') + '</b></div>';
     h += '</div><div class="grid g2" style="margin-top:18px"><div><h3 style="margin-bottom:10px">Attributes</h3>';
-    for (var k in HC.ATTR[p.pos]) {
-      var v = Math.round(p.a[k]), shown = v;
-      if (isP && !sv.exact) { var w = [12, 7, 3][sv.lv]; shown = null; h += '<div class="attr"><span class="mut">' + HC.ATTR_NAMES[k] + '</span>' + bar(50, '#334155') + '<b class="dim">??</b></div>'; continue; }
-      h += '<div class="attr"><span class="mut">' + HC.ATTR_NAMES[k] + '</span>' + bar(v, v >= 85 ? '#22c55e' : v >= 70 ? '#3b82f6' : '#64748b') + '<b>' + shown + '</b></div>';
-    }
+    HC.allAttrs(p.pos).forEach(function (k) {
+      if (p.a[k] == null) return;
+      var v = Math.round(p.a[k]), ex = !HC.ATTR[p.pos][k];
+      var lab = HC.ATTR_NAMES[k] + (ex ? ' <span class="dim" title="Trained in practice; affects games but not OVR">◆</span>' : '');
+      if (isP && !sv.exact) { h += '<div class="attr a2"><span class="mut">' + lab + '</span>' + bar(50, '#334155') + '<b class="dim">??</b><span></span></div>'; return; }
+      var dd = (!isP && p.a0 && p.a0[k] != null) ? p.a[k] - p.a0[k] : 0;
+      h += '<div class="attr a2"><span class="mut">' + lab + '</span>' + bar(v, v >= 85 ? '#22c55e' : v >= 70 ? '#3b82f6' : '#64748b') + '<b>' + v + '</b><span class="' + (dd >= .1 ? 'good' : dd <= -.1 ? 'bad' : 'dim') + '" style="font-size:11.5px;font-weight:700">' + (isP ? '' : (Math.abs(dd) < .1 ? '·' : sgn(dd))) + '</span></div>';
+    });
     if (isP && !sv.exact) h += '<div class="dim" style="font-size:12px">Scout him fully to reveal exact attributes.</div>';
+    else if (!isP) h += '<div class="dim" style="font-size:11.5px;margin-top:4px">Right column: change since the start of the ' + G.season + ' season. ◆ = practice skill that affects games but not OVR.</div>';
+    if (!isP && p.dh && p.dh.length > 1) h += '<div class="row" style="margin-top:12px;gap:10px"><span class="mut" style="font-size:12px">Season OVR trend</span>' + spark(p.dh, 150, 30) + trendArrow(p.dh) + '<span class="dim" style="font-size:11px">' + p.dh[0].toFixed(1) + ' → ' + p.dh[p.dh.length - 1].toFixed(1) + '</span></div>';
+    h += charBlock(p, isP, sv);
     h += '</div><div><h3 style="margin-bottom:10px">' + G.season + ' Stats</h3>' + statLines(p) + '</div></div>';
     h += '</div><div class="mf">';
     if (mine) {
       h += '<button class="btn" data-act="negotiate" data-arg="' + p.id + '">✍️ Extend / Re-sign</button><button class="btn danger" data-act="release" data-arg="' + p.id + '">Release (dead cap ' + fmtM(HC.deadCap(p)) + ')</button>';
       h += '<button class="btn" data-act="promote" data-arg="' + p.id + '">⬆ Make starter</button>';
+      var isF = G.user.plan && G.user.plan.fp.indexOf(p.id) >= 0;
+      h += '<button class="btn' + (isF ? ' pri' : '') + '" data-act="pfocus" data-arg="' + p.id + '">' + (isF ? '⭐ Focus player' : '☆ Make focus player') + '</button>';
     } else if (p.tm === 'FA') h += '<button class="btn pri" data-act="negotiate" data-arg="' + p.id + '">✍️ Negotiate Contract</button>';
     else if (isP) h += '<button class="btn" data-act="scout" data-arg="' + p.id + '"' + (sv.exact ? ' disabled' : '') + '>🔍 Scout (' + (sv.exact ? 'done' : HC.SC_COST[sv.lv] + ' pts') + ')</button>' + (G.phase === 'draft' && G.draft.order[G.draft.cur].ab === me ? '<button class="btn pri" data-act="dpick" data-arg="' + p.id + '">Draft Him</button>' : '');
     h += '<button class="btn ghost" data-act="close">Close</button></div></div></div>';
     closeOv(); document.body.insertAdjacentHTML('beforeend', h);
+  }
+  function charBlock(p, isP, sv) {
+    var P = HC.PERS[p.pers]; if (!P) return '';
+    var h = '<div style="margin-top:16px"><h3 style="margin-bottom:10px">Character</h3>';
+    if (isP && sv.lv < 1) return h + '<div class="dim" style="font-size:12.5px">Unknown. Scout him to learn about his work ethic, personality and composure.</div></div>';
+    h += '<div class="row wrap" style="gap:8px;margin-bottom:8px">' + persBadge(p, true) + charTagsHtml(p) + '</div><div class="mut" style="font-size:12.5px;margin-bottom:10px">' + esc(P.d) + '</div>';
+    if (isP && sv.lv < 2) return h + '<div class="dim" style="font-size:12px">Scout further to reveal his character ratings.</div></div>';
+    [['eth', 'Work Ethic', 'Practice growth speed'], ['coa', 'Coachability', 'How well drills stick'], ['ldr', 'Leadership', 'Lifts team morale & chemistry'], ['clu', 'Clutch / Composure', 'Crunch time, 3rd down, red zone, playoffs'], ['att', 'Attitude', 'Low = drama, flags, complaints'], ['ego', 'Ego', 'High = wants the ball & the money']].forEach(function (x) {
+      var v = p[x[0]], good = x[0] === 'ego' ? 100 - v : v;
+      h += '<div class="attr a2" title="' + x[2] + '"><span class="mut">' + x[1] + '</span>' + bar(v, good >= 75 ? '#22c55e' : good >= 50 ? '#3b82f6' : good >= 35 ? '#eab308' : '#ef4444') + '<b>' + v + '</b><span class="dim" style="font-size:10.5px"></span></div>';
+    });
+    return h + '<div class="dim" style="font-size:11px">Character ratings are the game\'s own estimates.</div></div>';
   }
   function statLines(p) {
     var s = p.st || {}, rows = [];

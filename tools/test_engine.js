@@ -5,7 +5,9 @@ function playSeason(){
  let tot={pts:0,g:0,ties:0};
  for(let w=1;w<=18;w++){
   const ev=G.user.pendingEvent; if(ev) HC.applyChoice(G,ev,w%ev.ch.length);
-  G.user.focus=['balanced','offense','defense','young','conditioning','gameplan'][w%6];
+  // vary the position practice plan
+  const pl=G.user.plan; HC.PGROUPS.forEach((g,i)=>{ pl.int[g.k]=['light','normal','hard'][(w+i)%3]; pl.drill[g.k]=g.drills[(w+i)%g.drills.length][0]; });
+  pl.gp=w%3===0?1:0; pl.cond=w%4===0?1:0; if(HC.planHours(pl)>HC.PRAC_BUDGET){pl.gp=0;pl.cond=0;}
   const g=HC.userGame(G);
   if(g){ const gs=HC.newGame(G,g.h,g.a); let n=0; while(!gs.over&&n++<500){ HC.runPlay(G,gs,HC.aiOffCall(G,gs),HC.aiDefCall(G,gs)); } HC.recordUserGame(G,gs); if(G.user.pressPending){HC.applyChoice(G,G.user.pressPending,1);G.user.pressPending=null;} }
   // contracts: try FA sign + release + extension
@@ -28,4 +30,23 @@ function playSeason(){
 playSeason();
 const s=JSON.stringify(G); console.log('save size KB',(s.length/1024).toFixed(0));
 G=JSON.parse(s); playSeason();
+// practice planner sanity: drill focus grows targeted attributes faster
+{
+ const G2=HC.newLeague(D,'DET','Drill Test'); const qbs=HC.teamPlayers(G2,'DET'); const pl=G2.user.plan;
+ HC.PGROUPS.forEach(g=>{pl.hrs[g.k]=g.def;pl.int[g.k]='normal';pl.drill[g.k]='bal';}); pl.hrs.OL=8; pl.int.OL='hard'; pl.drill.OL='pass'; pl.hrs.QB=1;
+ const ol=qbs.filter(p=>['OT','G','C'].includes(p.pos)), b=ol.map(p=>({pb:p.a.PBK,rb:p.a.RBK}));
+ for(let w=0;w<10;w++){ G2.user.pendingEvent=null; const g=HC.userGame(G2); if(g){const gs=HC.quickSim(G2,g.h,g.a); HC.recordUserGame(G2,gs); G2.user.pressPending=null;} HC.advanceWeek(G2); }
+ let dpb=0,drb=0; ol.forEach((p,i)=>{dpb+=p.a.PBK-b[i].pb; drb+=p.a.RBK-b[i].rb;});
+ const fat=HC.avg(ol.map(p=>p.fat));
+ console.log('OL pass-pro drill 10 wks: PBK +'+(dpb/ol.length).toFixed(2)+' vs RBK +'+(drb/ol.length).toFixed(2)+' avg fatigue '+fat.toFixed(0));
+ if(!(dpb>drb)) throw new Error('drill focus did not favor PBK');
+ const rep=G2.user.prac; if(!rep||!rep.groups.OL) throw new Error('no practice report'); console.log('report groups',Object.keys(rep.groups).join(','));
+ const chars={}; Object.values(G2.players).forEach(p=>{chars[p.pers]=(chars[p.pers]||0)+1;}); console.log('personality mix',JSON.stringify(chars));
+}
+// old save (pre-practice-planner) migrates and keeps playing
+const fs=require('fs'); if(fs.existsSync('/workspace/hc_old/old_save.json')){
+ const O=JSON.parse(fs.readFileSync('/workspace/hc_old/old_save.json','utf8')); if(O.user.plan) throw new Error('old save already has plan?');
+ HC.migrate(O); for(let w=0;w<3;w++){O.user.pendingEvent=null; const g=HC.userGame(O); if(g){const gs=HC.quickSim(O,g.h,g.a); HC.recordUserGame(O,gs); O.user.pressPending=null;} HC.advanceWeek(O);}
+ console.log('old save migrated: week',O.week,'plan hrs',HC.planHours(O.user.plan),'report',!!O.user.prac,'sample',(p=>p.ln+' '+p.pers+' eth'+p.eth+' clu'+p.clu)(HC.teamPlayers(O,O.user.ab)[0]));
+}
 console.log('OK');

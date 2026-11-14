@@ -28,6 +28,11 @@ var HC = (function () {
     K: { KPW: .5, KAC: .5 }, P: { KPW: .6, KAC: .4 }, LS: { AWR: 1 }
   };
   var ATTR_NAMES = { THP: 'Throw Power', ACC: 'Accuracy', DEC: 'Decision Making', SPD: 'Speed', ELU: 'Elusiveness', BCV: 'Ball Carrier Vision', BTK: 'Break Tackle', CTH: 'Catching', RTE: 'Route Running', REL: 'Release', RBK: 'Run Block', PBK: 'Pass Block', STR: 'Strength', AWR: 'Awareness', PRS: 'Pass Rush', RST: 'Run Stop', TKL: 'Tackling', COV: 'Man Coverage', ZON: 'Zone Coverage', BSK: 'Ball Skills', KPW: 'Kick Power', KAC: 'Kick Accuracy' };
+  // Extra trainable skills that feed the sim but are not part of OVR (keeps ratings comparable across saves)
+  var EXTRA = { QB: { POC: -8 }, RB: { BSC: 0 }, WR: { BSC: 0 }, TE: { BSC: 0 }, LB: { PRS: -8 }, S: { RST: -6 } };
+  ATTR_NAMES.POC = 'Pocket Presence'; ATTR_NAMES.BSC = 'Ball Security';
+  function allAttrs(pos) { return Object.keys(ATTR[pos] || {}).concat(Object.keys(EXTRA[pos] || {})); }
+  E.EXTRA = EXTRA; E.allAttrs = allAttrs;
   var POS_ORDER = ['QB', 'RB', 'WR', 'TE', 'OT', 'G', 'C', 'EDGE', 'DT', 'LB', 'CB', 'S', 'K', 'P', 'LS'];
   var OFF = { QB: 1, RB: 1, WR: 1, TE: 1, OT: 1, G: 1, C: 1 };
   var DEF = { EDGE: 1, DT: 1, LB: 1, CB: 1, S: 1 };
@@ -42,9 +47,12 @@ var HC = (function () {
     for (k in w) { a[k] = ovr + gauss() * 5; s += w[k] * a[k]; }
     var shift = ovr - s;
     for (k in w) a[k] = clamp(a[k] + shift, 25, 99);
+    var x = EXTRA[pos] || {}; for (k in x) a[k] = clamp(ovr + x[k] + gauss() * 5, 25, 99);
     return a;
   }
   E.calcOvr = calcOvr;
+  function wovr(p) { var w = ATTR[p.pos], s = 0, k; for (k in w) s += w[k] * p.a[k]; return clamp(s, 25, 99); }
+  E.wovr = wovr;
 
   // ---------- League creation ----------
   E.newLeague = function (D, userAb, coachName) {
@@ -63,6 +71,8 @@ var HC = (function () {
     G.sched = D.weeks.map(function (wk) { return wk.map(function (g) { return { h: g[0], a: g[1], hs: null, as: null }; }); });
     var t = G.teams[userAb];
     G.user = { ab: userAb, coach: coachName || 'Coach', focus: 'balanced', intensity: 'normal', disc: 50, unity: 50, dev: 50, sp: 40, pendingEvent: null, lastReport: [], gameplanBonus: 0, pressPending: null, log: [] };
+    G.user.plan = autoPlan(G, userAb);
+    E.migrate(G);
     E.genDraftClass(G);
     addNews(G, 'Welcome, Coach ' + G.user.coach + '! You take over the ' + t.city + ' ' + t.name + (t.realHC ? ' (replacing ' + t.realHC + ')' : '') + '.', 'big');
     E.newWeeklyEvent(G);
@@ -114,24 +124,29 @@ var HC = (function () {
   E.lineup = lineup;
   function avg(a) { return a.length ? a.reduce(function (s, x) { return s + x; }, 0) / a.length : 50; }
   E.avg = avg;
-  function A(p, k) { return p.a[k] != null ? p.a[k] : p.ovr - 8; }
+  function A(p, k) { var v = p.a[k] != null ? p.a[k] : p.ovr - 8; return p.fat > 40 ? v - (p.fat - 40) * .06 : v; }
   function units(G, ab, home) {
     var L = lineup(G, ab), t = G.teams[ab];
     var qb = L.QB[0], rb = L.RB[0], ol = L.OT.concat(L.G, L.C);
     var u = {
       L: L,
       pass: A(qb, 'ACC') * .4 + A(qb, 'DEC') * .3 + A(qb, 'THP') * .3,
-      recv: avg(L.WR.map(function (p) { return p.ovr; })) * .8 + L.TE[0].ovr * .2,
+      recv: avg(L.WR.map(function (p) { return A(p, 'RTE') * .35 + A(p, 'CTH') * .35 + A(p, 'REL') * .15 + A(p, 'SPD') * .15; })) * .8 + (A(L.TE[0], 'CTH') * .6 + A(L.TE[0], 'RTE') * .4) * .2,
+      rel: avg(L.WR.map(function (p) { return A(p, 'REL'); })),
       pblk: avg(ol.map(function (p) { return A(p, 'PBK'); })),
       rblk: avg(ol.map(function (p) { return A(p, 'RBK'); })) * .85 + A(L.TE[0], 'RBK') * .15,
       rush: A(rb, 'SPD') * .3 + A(rb, 'ELU') * .25 + A(rb, 'BCV') * .3 + A(rb, 'BTK') * .15,
       prs: avg(L.EDGE.map(function (p) { return A(p, 'PRS'); })) * .65 + avg(L.DT.map(function (p) { return A(p, 'PRS'); })) * .35,
-      rdef: avg(L.DT.concat(L.EDGE).map(function (p) { return A(p, 'RST'); })) * .6 + avg(L.LB.map(function (p) { return (A(p, 'RST') + A(p, 'TKL')) / 2; })) * .4,
+      rdef: avg(L.DT.concat(L.EDGE).map(function (p) { return A(p, 'RST'); })) * .6 + avg(L.LB.map(function (p) { return (A(p, 'RST') + A(p, 'TKL')) / 2; })) * .3 + avg(L.S.map(function (p) { return (A(p, 'RST') + A(p, 'TKL')) / 2; })) * .1,
+      blz: avg(L.LB.map(function (p) { return A(p, 'PRS'); })),
+      bsk: avg(L.CB.map(function (p) { return A(p, 'BSK'); })),
       cov: avg(L.CB.map(function (p) { return A(p, 'COV') * .6 + A(p, 'ZON') * .4; })) * .6 + avg(L.S.map(function (p) { return A(p, 'ZON'); })) * .3 + avg(L.LB.map(function (p) { return A(p, 'COV'); })) * .1,
-      k: L.K[0], p: L.P[0]
+      k: L.K[0], p: L.P[0],
+      cluD: avg(L.EDGE.concat(L.DT, L.LB, L.CB, L.S).map(function (p) { return p.clu || 60; })),
+      hot: L.EDGE.concat(L.DT, L.LB, L.CB, L.S).filter(function (p) { return !p.rep && (p.pers === 'HOT' || p.pers === 'CANCER' || (p.att != null && p.att < 35)); })
     };
     var bonus = (t.chem - 50) / 50 * 2.5 + (home ? 1 : 0);
-    if (G.user && G.user.ab === ab) bonus += G.user.gameplanBonus || 0;
+    if (G.user && G.user.ab === ab) bonus += (G.user.plan && G.user.plan.gp) ? 1.8 : (G.user.gameplanBonus || 0);
     ['pass', 'recv', 'pblk', 'rblk', 'rush', 'prs', 'rdef', 'cov'].forEach(function (k) { u[k] += bonus; });
     u.disc = (G.user && G.user.ab === ab) ? G.user.disc : 50;
     return u;
@@ -264,7 +279,8 @@ var HC = (function () {
   function injuryCheck(G, gs, p) {
     if (!p || p.rep || p.inj) return '';
     var risk = .0028;
-    if (G.user && p.tm === G.user.ab) { if (G.user.focus === 'conditioning') risk *= .6; if (G.user.intensity === 'hard') risk *= 1.3; if (G.user.intensity === 'light') risk *= .8; }
+    risk *= 1 + (p.fat || 0) / 200;
+    if (G.user && p.tm === G.user.ab && G.user.plan && G.user.plan.cond) risk *= .6;
     if (rnd() < risk) {
       p.inj = pick([1, 1, 1, 2, 2, 3, 4, 6, 8]);
       gs.injuries.push(p.id);
@@ -284,6 +300,9 @@ var HC = (function () {
     if (gs.over) return null;
     var off = gs.pos, def = other(gs, off), U = gs.U[off], D = gs.U[def], L = U.L, DL = D.L;
     var discF = 1.15 - (U.disc / 100) * .3;
+    var margin = Math.abs(gs.sc[off] - gs.sc[def]), crunch = (gs.q >= 4 && gs.clock <= 300 && margin <= 8) || gs.q >= 5;
+    var lev = crunch ? 1 : 0; if (gs.down >= 3) lev += .5; if (gs.ball >= 80) lev += .5; if (gs.playoff) lev += .3; lev = Math.min(1, lev);
+    var heroP = null, goatP = null;
     var hurry = (gs.q >= 4 && gs.clock < 300 && gs.sc[off] < gs.sc[def]) || (gs.q === 2 && gs.clock < 120);
     var res = { oc: oc, dc: dc, off: off, def: def, startBall: gs.ball, down: gs.down, togo: gs.togo, yards: 0, anim: {} };
     var txt = '', time = 0, yards = 0, turnover = false, score = 0, extra = '';
@@ -316,7 +335,7 @@ var HC = (function () {
     } else if (oc === 'RUN_IN' || oc === 'RUN_OUT') {
       var rb = L.RB[0];
       if (rnd() < .07 && A(L.QB[0], 'SPD') > 76) rb = L.QB[0];
-      var diff = (U.rblk * .5 + U.rush * .5) - D.rdef, m = MOD[dc][oc];
+      var diff = (U.rblk * .5 + U.rush * .5) - D.rdef + ((rb.clu || 60) - (D.cluD || 60)) * .08 * lev, m = MOD[dc][oc];
       var mean = (oc === 'RUN_IN' ? 3.25 : 3.4) + diff / 9 + m[1], sd = oc === 'RUN_IN' ? 2.8 : 4.3;
       if (dc === 'BLITZ') sd *= 1.35;
       yards = Math.round(mean + gauss() * sd);
@@ -327,9 +346,10 @@ var HC = (function () {
       if (gs.ball + yards <= 0) yards = -gs.ball;
       var tk = tackler(DL, 'run');
       st(G, rb, 'ra', 1); st(G, rb, 'ry', yards);
+      if (crunch && yards >= 7 && (rb.clu || 0) >= 78) heroP = rb;
       gs.tst[off].rush += yards;
-      if (rnd() < .007 * discF) {
-        turnover = true; st(G, tk, 'ff', 1);
+      if (rnd() < .007 * discF * clamp(1 + (72 - A(rb, 'BSC')) * .03, .4, 2)) {
+        turnover = true; st(G, tk, 'ff', 1); if (crunch && (rb.clu || 60) < 48) goatP = rb;
         txt = pname(rb) + ' runs ' + (oc === 'RUN_IN' ? 'up the middle' : 'to the outside') + ' and FUMBLES! ' + pname(tk) + ' forces it, ' + G.teams[def].name + ' recover.';
       } else {
         txt = pname(rb) + (oc === 'RUN_IN' ? pick([' up the middle', ' between the tackles', ' behind the guard']) : pick([' around the left end', ' around the right end', ' on the stretch'])) + ' for ' + yardStr(yards) + '.';
@@ -343,15 +363,19 @@ var HC = (function () {
     } else {
       var P0 = PASS[oc], mm = MOD[dc][oc], qb = L.QB[0];
       var dpass = (U.pass * .55 + U.recv * .45) - D.cov, dprot = U.pblk - D.prs;
+      dpass += ((qb.clu || 60) - (D.cluD || 60)) * .1 * lev;
+      if (dc === 'MAN' || dc === 'BLITZ') dpass += ((U.rel || 72) - 72) * .2;
+      if (dc === 'BLITZ') dprot -= ((D.blz || 62) - 62) * .25;
       var pa = oc === 'PA' ? clamp(gs.recentRuns * .012, 0, .06) : 0;
-      var sackP = clamp(P0.sk + mm[2] * .75 - dprot * .0022 - (A(qb, 'DEC') - 70) * .0008, .005, .3);
+      var sackP = clamp(P0.sk + mm[2] * .75 - dprot * .0022 - (A(qb, 'DEC') - 70) * .0008 - (A(qb, 'POC') - 70) * .0008, .005, .3);
       var compP = clamp(P0.c + mm[0] + dpass * .005 + pa, .1, .93);
-      var intP = clamp((P0.int + (mm[3] || 0) - dpass * .0007 - (A(qb, 'DEC') - 70) * .0006) * discF, .002, .12);
+      var intP = clamp((P0.int + (mm[3] || 0) - dpass * .0007 - (A(qb, 'DEC') - 70) * .0006) * discF * clamp(1 + ((D.bsk || 70) - 70) * .012, .7, 1.4), .002, .12);
       time = hurry ? 17 : ri(32, 43);
       if (rnd() < sackP) {
         var sk = wpick(DL.EDGE.concat(DL.DT, DL.LB), function (p) { return A(p, 'PRS') * (p.pos === 'EDGE' ? 1.6 : 1); });
         yards = -ri(3, 10); if (gs.ball + yards <= 0) yards = -gs.ball;
         st(G, sk, 'sck', 1); st(G, sk, 'tkl', 1); gs.tst[def].sacks++;
+        if (crunch) { if ((sk.clu || 0) >= 76) heroP = sk; else if ((qb.clu || 60) < 52) goatP = qb; }
         txt = pname(qb) + ' is SACKED by ' + pname(sk) + ' for a loss of ' + (-yards) + '.';
         res.anim = { kind: 'sack' };
         gs.tst[off].pass += yards;
@@ -361,10 +385,11 @@ var HC = (function () {
         var tgt = chooseTarget(L, oc), air = Math.round(P0.air + mm[1] * .5 + gauss() * P0.asd);
         if (gs.ball + air >= 100) air = Math.max(1, 99 - gs.ball + ri(0, 1));
         st(G, qb, 'pa', 1);
-        var tq = (tgt.ovr - 72) * .003;
+        var tq = ((A(tgt, 'CTH') * .6 + A(tgt, 'RTE') * .4) - 70) * .003;
         if (rnd() < intP) {
           var db = wpick(DL.CB.concat(DL.S, DL.LB), function (p) { return (p.a.BSK || p.a.ZON || 50) * (p.pos === 'LB' ? .3 : 1); });
           st(G, qb, 'int', 1); st(G, db, 'dint', 1); turnover = true;
+          if (crunch) { if ((db.clu || 0) >= 76) heroP = db; else if ((qb.clu || 60) < 52) goatP = qb; }
           txt = pname(qb) + ' throws ' + (oc === 'PASS_D' ? 'deep ' : '') + 'for ' + pname(tgt) + '... INTERCEPTED by ' + pname(db) + '!';
           yards = air; res.anim = { kind: 'int', air: air, tgt: tgt.id };
           res.intRet = Math.max(0, Math.round(gauss() * 8 + 6));
@@ -374,10 +399,11 @@ var HC = (function () {
           if (rnd() < .02 + Math.max(0, dpass) * .0012) yac += ri(10, 40);
           yards = air + yac; if (gs.ball + yards >= 100) yards = 100 - gs.ball; if (gs.ball + yards <= 0) yards = -gs.ball + 1;
           st(G, qb, 'pc', 1); st(G, qb, 'py', yards); st(G, tgt, 'rec', 1); st(G, tgt, 'recy', yards);
+          if (crunch && yards >= 10) { if ((tgt.clu || 0) >= 78 && (tgt.clu || 0) > (qb.clu || 0)) heroP = tgt; else if ((qb.clu || 0) >= 76) heroP = qb; }
           gs.tst[off].pass += yards;
           txt = pname(qb) + (oc === 'SCREEN' ? ' screen to ' : oc === 'PASS_D' ? ' launches deep... CAUGHT by ' : ' complete to ') + pname(tgt) + ' for ' + yardStr(yards) + '.';
           if (gs.ball + yards < 100) { var tk2 = tackler(DL, oc === 'PASS_D' ? 'deep' : 'pass'); st(G, tk2, 'tkl', 1); if (rnd() < .4) txt += ' Brought down by ' + pname(tk2) + '.'; }
-          if (gs.ball + yards < 100 && rnd() < .006 * discF) { turnover = true; txt += ' FUMBLE after the catch! ' + G.teams[def].name + ' recover.'; }
+          if (gs.ball + yards < 100 && rnd() < .006 * discF * clamp(1 + (72 - A(tgt, 'BSC')) * .03, .4, 2)) { turnover = true; txt += ' FUMBLE after the catch! ' + G.teams[def].name + ' recover.'; }
           res.anim = { kind: 'pass', air: air, tgt: tgt.id, tpos: tgt.pos, comp: true };
           if (gs.ball + yards >= 100 && !turnover) { score = 6; st(G, qb, 'ptd', 1); st(G, tgt, 'rectd', 1); }
           extra = injuryCheck(G, gs, tgt);
@@ -391,6 +417,12 @@ var HC = (function () {
       }
       gs.recentRuns = Math.max(0, gs.recentRuns - 1);
     }
+    if (!turnover && score !== 6 && D.hot && D.hot.length && gs.ball + yards + 15 < 100 && rnd() < .0032 * D.hot.length * (1.3 - (D.disc || 50) / 100 * .6)) {
+      var hp = pick(D.hot); yards += 15; st(G, hp, 'pen', 1);
+      txt += ' 🚩 FLAG: unnecessary roughness on ' + pname(hp) + ' (' + G.teams[def].name + '), 15 yards.';
+    }
+    if (heroP && !heroP.rep && rnd() < .8) txt += ' 🧊 ' + pname(heroP) + pick([' is taking over in crunch time!', ' wants the ball in the big moment, and delivers!', ' is ice cold when it matters most.']);
+    else if (goatP && !goatP.rep && rnd() < .8) txt += ' 😬 ' + pname(goatP) + ' looks rattled in the big moment.';
     res.yards = yards;
     gs.tst[off].yds += yards;
     tickClock(gs, time);
@@ -496,28 +528,27 @@ var HC = (function () {
   };
   function weeklyUpdate(G, wk) {
     var me = G.user.ab, id;
+    E.migrate(G);
     for (id in G.players) { var p0 = G.players[id]; if (p0.inj > 0) p0.inj--; }
-    G.order.forEach(function (ab) {
-      var u = ab === me, gains = [];
-      teamPlayers(G, ab).forEach(function (p) { var b = p.ovr, d = develop(G, p, u ? G.user.focus : 'balanced', u ? G.user.intensity : 'normal', u ? G.user.dev : 50, 1); if (u && p.pos !== 'LS' && p.pos !== 'K' && p.pos !== 'P') gains.push({ id: p.id, d: d, up: p.ovr - b }); });
-      if (u) { gains.sort(function (a, b) { return b.d - a.d; }); G.user.lastReport = gains.slice(0, 8); }
-      else { autoDepth(G, ab); aiFillRoster(G, ab); }
-    });
-    G.user.gameplanBonus = G.user.focus === 'gameplan' ? 1.8 : 0;
+    practiceWeek(G, false);
+    G.user.gameplanBonus = 0;
     var res = G.user.lastResult, Lm = lineup(G, me), starters = {}, pos;
     for (pos in Lm) Lm[pos].forEach(function (p) { starters[p.id] = 1; });
+    var cancers = 0, leaders = 0;
+    teamPlayers(G, me).forEach(function (p) { if (p.pers === 'CANCER' && p.mor < 45) cancers++; if (p.pers === 'LEADER' && p.mor >= 60) leaders++; });
     teamPlayers(G, me).forEach(function (p) {
-      var d = 0;
-      if (res === 'W') d += 1.5; else if (res === 'L') d -= 1.5;
+      var d = 0, pt = p.pers, rx = pt === 'COMP' ? 1.5 : pt === 'HOT' ? 1.6 : pt === 'PRO' ? .5 : pt === 'LEADER' ? .8 : 1;
+      if (res === 'W') d += 1.5 * (pt === 'HOT' ? 1 : rx); else if (res === 'L') d -= 1.5 * rx;
+      d += Math.min(1.2, leaders * .25) - Math.min(2, cancers * .5) * (pt === 'CANCER' ? 0 : 1);
       p.wantsSnaps = 0;
       if (starters[p.id]) d += .5;
       else if (p.ovr >= 70 && !p.inj && LINEUP[p.pos]) {
         var top = (G.teams[me].depth[p.pos] || []).slice(0, LINEUP[p.pos]).map(function (i) { return G.players[i].ovr; });
-        if (p.ovr >= Math.min.apply(null, top) - 2) { d -= 3; p.wantsSnaps = 1; } else d -= .5;
+        var bx = pt === 'DIVA' ? 1.7 : pt === 'CANCER' ? 1.5 : pt === 'TEAM' ? .3 : pt === 'PRO' ? .6 : 1;
+        if (p.ovr >= Math.min.apply(null, top) - 2) { d -= 3 * bx; p.wantsSnaps = 1; } else d -= .5 * bx;
       }
-      if (p.yrs === 1 && marketValue(p) > p.sal * 1.6 && p.ovr >= 75) { d -= 1.2; p.wantsDeal = 1; } else p.wantsDeal = 0;
-      if (G.user.intensity === 'hard') d -= 1.5; else if (G.user.intensity === 'light') d += 1;
-      d += (G.user.unity - 50) / 40 + (62 - p.mor) * .12;
+      if (p.yrs === 1 && marketValue(p) > p.sal * 1.6 && p.ovr >= 75) { d -= 1.2 * (pt === 'DIVA' ? 1.6 : pt === 'TEAM' ? .5 : 1); p.wantsDeal = 1; } else p.wantsDeal = 0;
+      d += (G.user.unity - 50) / 40 + ((pt === 'PRO' ? 68 : pt === 'CANCER' ? 55 : 62) - p.mor) * .12;
       p.mor = clamp(p.mor + d, 0, 100);
     });
     G.user.lastResult = null;
@@ -525,8 +556,8 @@ var HC = (function () {
       var t = G.teams[ab], wp = winPct(t), target;
       if (ab === me) {
         var ms = teamPlayers(G, me).sort(function (a, b) { return b.ovr - a.ovr; }).slice(0, 30).map(function (p) { return p.mor; });
-        target = avg(ms) * .6 + G.user.unity * .25 + wp * 20 - 3 + clamp(t.streak * 1.5, -6, 6);
-      } else target = 50 + (wp - .5) * 40 + clamp(t.streak * 1.5, -6, 6);
+        target = avg(ms) * .6 + G.user.unity * .25 + wp * 20 - 3 + clamp(t.streak * 1.5, -6, 6) + E.culture(G, ab) * .6;
+      } else target = 50 + (wp - .5) * 40 + clamp(t.streak * 1.5, -6, 6) + E.culture(G, ab) * .6;
       t.chem = clamp(t.chem + (target - t.chem) * .3, 5, 99);
     });
     G.user.sp += 8;
@@ -547,13 +578,228 @@ var HC = (function () {
     else d = .07 * ageF * rf(.3, 1.7) / (fF > 1 ? 1.3 : 1);
     d *= weeks;
     if (p.inj) d *= .3;
-    var w = ATTR[p.pos], k;
-    for (k in w) p.a[k] = clamp(p.a[k] + d * rf(.5, 1.5), 25, 99);
+    allAttrs(p.pos).forEach(function (k) { if (p.a[k] != null) p.a[k] = clamp(p.a[k] + d * rf(.5, 1.5), 25, 99); });
     p.ovr = calcOvr(p); if (p.ovr > p.pot) p.pot = p.ovr;
     p.prog = (p.prog || 0) + d;
     return d;
   }
   E.develop = develop;
+  // ---------- Character & personality ----------
+  var PERS = {
+    LEADER: { n: 'Leader', i: '👑', co: 82, eg: 40, at: 86, eth: 8, ldr: 26, clu: 6, d: 'Vocal and respected. Lifts the locker room and steadies teammates.' },
+    PRO: { n: 'Quiet Pro', i: '🧰', co: 86, eg: 25, at: 82, eth: 10, ldr: 0, clu: 2, d: 'Shows up, handles his job, no drama. Steady morale.' },
+    TEAM: { n: 'Team First', i: '🤝', co: 80, eg: 18, at: 86, eth: 4, ldr: 6, clu: 0, d: 'Takes any role that helps the team. Rarely complains about snaps or money.' },
+    COMP: { n: 'Competitor', i: '🔥', co: 66, eg: 55, at: 70, eth: 6, ldr: 4, clu: 8, d: 'Hates losing. Rises in big moments but takes losses hard.' },
+    HOT: { n: 'Hothead', i: '💢', co: 46, eg: 60, at: 38, eth: -2, ldr: -6, clu: -5, d: 'Emotional. Draws personal fouls and blows up after bad weeks.' },
+    DIVA: { n: 'Me-First', i: '💎', co: 40, eg: 92, at: 44, eth: -6, ldr: -8, clu: 2, d: 'Wants the ball and the money. Pouts when he is not featured.' },
+    CANCER: { n: 'Locker Room Cancer', i: '☣️', co: 25, eg: 86, at: 18, eth: -12, ldr: -16, clu: -6, d: 'Divisive. Drags down chemistry and teammates when unhappy.' }
+  };
+  E.PERS = PERS;
+  function seedRng(str) {
+    var h = 2166136261 >>> 0, i;
+    for (i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return function () { h = (h + 0x6D2B79F5) | 0; var t = h; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  }
+  function genChar(p) {
+    var r = seedRng('ch|' + p.id + '|' + p.fn + p.ln), g = function () { return (r() + r() + r() + r() - 2) * 1.7; };
+    var vet = clamp((p.exp || 0) / 8, 0, 1), star = clamp((p.ovr - 70) / 20, 0, 1);
+    var w = { LEADER: 5 + 14 * vet + (p.pos === 'QB' ? 8 : 0) + 6 * star, PRO: 24, TEAM: 20, COMP: 18, HOT: 11, DIVA: 5 + 12 * star * (p.pos === 'WR' ? 1.7 : 1), CANCER: 4 };
+    var tot = 0, k; for (k in w) tot += w[k];
+    var x = r() * tot, t = 'PRO'; for (k in w) { x -= w[k]; if (x <= 0) { t = k; break; } }
+    var P = PERS[t];
+    p.pers = t;
+    p.eth = Math.round(clamp(67 + g() * 11 + P.eth, 30, 99));
+    p.ldr = Math.round(clamp(40 + 22 * vet + g() * 9 + P.ldr * .8 + (p.pos === 'QB' ? 5 : 0), 15, 99));
+    p.clu = Math.round(clamp(61 + g() * 11 + 6 * star + P.clu, 25, 99));
+    p.coa = Math.round(clamp(P.co + g() * 7, 10, 99));
+    p.ego = Math.round(clamp(P.eg + g() * 7, 5, 99));
+    p.att = Math.round(clamp(P.at + g() * 7, 5, 99));
+  }
+  function charTags(p) {
+    var o = [];
+    if (!p.pers) return o;
+    if (p.pers === 'LEADER' || p.ldr >= 80) o.push('Leader');
+    if (p.pers === 'HOT' || p.pers === 'DIVA' || p.pers === 'CANCER' || p.att < 40) o.push('Attitude');
+    if (p.clu >= 82) o.push('Clutch'); else if (p.clu < 45) o.push('Rattles');
+    if (p.eth >= 85) o.push('Grinder'); else if (p.eth < 50) o.push('Lazy');
+    return o;
+  }
+  E.charTags = charTags;
+  E.isAttitude = function (p) { return p.pers === 'HOT' || p.pers === 'DIVA' || p.pers === 'CANCER'; };
+  function snapA(p) { var o = {}; allAttrs(p.pos).forEach(function (k) { if (p.a[k] != null) o[k] = Math.round(p.a[k] * 10) / 10; }); return o; }
+  function ensureP(G, p) {
+    if (!p || !p.a) return;
+    var x = EXTRA[p.pos] || {}, k;
+    for (k in x) if (p.a[k] == null) p.a[k] = clamp(p.ovr + x[k] + gauss() * 5, 25, 99);
+    if (!p.pers || p.eth == null || p.clu == null) genChar(p);
+    if (p.fat == null) p.fat = 0;
+    if (!p.a0) p.a0 = snapA(p);
+    if (G && G.user && p.tm === G.user.ab && !p.dh) p.dh = [Math.round(wovr(p) * 10) / 10];
+  }
+  E.ensureP = ensureP;
+  // Team culture from character (all 32 teams, so the league stays balanced)
+  E.culture = function (G, ab) {
+    var ps = teamPlayers(G, ab).sort(function (a, b) { return b.ovr - a.ovr; }).slice(0, 30), s = 0;
+    ps.forEach(function (p) {
+      if (!p.pers) return;
+      if (p.pers === 'LEADER') s += .5 + (p.ldr - 70) / 40 + (p.mor - 55) / 60;
+      else if (p.ldr >= 80) s += .35;
+      if (p.pers === 'HOT') s -= p.mor < 50 ? .7 : .15;
+      if (p.pers === 'DIVA') s -= p.mor < 55 ? .9 : .25;
+      if (p.pers === 'CANCER') s -= p.mor < 60 ? 2 : .8;
+    });
+    return clamp(s, -8, 8);
+  };
+
+  // ---------- Practice planner ----------
+  var PRAC_BUDGET = 24, SESSION_COST = { gp: 3, cond: 2 }, MAX_HRS = 8, FOCUS_MAX = 3;
+  var INTEN = { light: { n: 'Light', g: .7, load: 2, inj: .5, mor: .6 }, normal: { n: 'Normal', g: 1, load: 4, inj: 1, mor: 0 }, hard: { n: 'Hard', g: 1.4, load: 7.5, inj: 2.2, mor: -1.2 } };
+  var BAL = ['bal', 'Balanced', 'Even work on every skill', {}];
+  var PGROUPS = [
+    { k: 'QB', n: 'Quarterbacks', side: 'off', pos: ['QB'], st: 1, def: 3, drills: [BAL, ['acc', 'Accuracy & Timing', 'Ball placement: more completions', { ACC: .75, DEC: .25 }], ['arm', 'Arm Strength', 'Velocity on deep and outside throws', { THP: .8, ACC: .2 }], ['read', 'Reading Defenses', 'Film and progressions: fewer picks and sacks', { DEC: .8, POC: .2 }], ['pocket', 'Pocket Presence', 'Feel the rush: fewer sacks', { POC: .75, SPD: .25 }]] },
+    { k: 'RB', n: 'Running Backs', side: 'off', pos: ['RB'], st: 1, def: 2, drills: [BAL, ['vision', 'Vision & Cuts', 'Find the hole: more yards per carry', { BCV: .65, ELU: .35 }], ['ballsec', 'Ball Security', 'High-and-tight: fewer fumbles', { BSC: .8, BTK: .2 }], ['catch', 'Pass Catching', 'Hands out of the backfield', { CTH: .8, SPD: .2 }], ['power', 'Power Running', 'Break tackles after contact', { BTK: .7, SPD: .3 }]] },
+    { k: 'WR', n: 'Wide Receivers', side: 'off', pos: ['WR'], st: 3, def: 2, drills: [BAL, ['routes', 'Route Running', 'Separation on every route', { RTE: .8, REL: .2 }], ['hands', 'Hands', 'Catch everything, protect the ball', { CTH: .7, BSC: .3 }], ['release', 'Release vs Press', 'Beat man coverage and the blitz', { REL: .8, SPD: .2 }], ['speed', 'Speed & YAC', 'Run after the catch', { SPD: .7, RTE: .3 }]] },
+    { k: 'TE', n: 'Tight Ends', side: 'off', pos: ['TE'], st: 1, def: 2, drills: [BAL, ['block', 'Blocking', 'Seal the edge in the run game', { RBK: .85, SPD: .15 }], ['recv', 'Receiving', 'Routes and hands over the middle', { CTH: .5, RTE: .5 }]] },
+    { k: 'OL', n: 'Offensive Line', side: 'off', pos: ['OT', 'G', 'C'], st: 5, def: 3, drills: [BAL, ['pass', 'Pass Protection', 'Keep the QB clean: fewer sacks', { PBK: .8, STR: .1, AWR: .1 }], ['run', 'Run Blocking', 'Open lanes for the backs', { RBK: .8, STR: .2 }], ['anchor', 'Strength & Technique', 'Anchor, hand placement, calls', { STR: .5, AWR: .3, PBK: .1, RBK: .1 }]] },
+    { k: 'DL', n: 'Defensive Line', side: 'def', pos: ['EDGE', 'DT'], st: 4, def: 3, drills: [BAL, ['rush', 'Pass Rush Moves', 'Win 1-on-1s: more sacks', { PRS: .8, SPD: .2 }], ['runstop', 'Run Stopping', 'Hold the point of attack', { RST: .75, STR: .25 }], ['getoff', 'Get-Off & Power', 'First step and bull rush', { SPD: .5, STR: .5 }]] },
+    { k: 'LB', n: 'Linebackers', side: 'def', pos: ['LB'], st: 2, def: 2, drills: [BAL, ['tackle', 'Tackling', 'Wrap up, no missed tackles', { TKL: .8, RST: .2 }], ['cover', 'Coverage', 'Carry backs and tight ends', { COV: .8, SPD: .2 }], ['blitz', 'Blitzing', 'Timing and rush lanes on blitzes', { PRS: .8, SPD: .2 }], ['runfit', 'Run Fits', 'Fill the right gap', { RST: .7, TKL: .3 }]] },
+    { k: 'CB', n: 'Cornerbacks', side: 'def', pos: ['CB'], st: 3, def: 2, drills: [BAL, ['man', 'Man Coverage', 'Press and mirror', { COV: .8, SPD: .2 }], ['zone', 'Zone Coverage', 'Read the QB, break on throws', { ZON: .8, BSK: .2 }], ['ball', 'Ball Skills', 'Turn PBUs into interceptions', { BSK: .8, ZON: .2 }]] },
+    { k: 'S', n: 'Safeties', side: 'def', pos: ['S'], st: 2, def: 2, drills: [BAL, ['deep', 'Deep Coverage', 'Range in the deep half', { ZON: .6, COV: .2, SPD: .2 }], ['tackle', 'Tackling', 'Last line of defense', { TKL: .8, SPD: .2 }], ['support', 'Run Support', 'Come downhill vs the run', { RST: .7, TKL: .3 }]] },
+    { k: 'ST', n: 'Special Teams', side: 'st', pos: ['K', 'P', 'LS'], st: 2, def: 1, drills: [BAL, ['power', 'Leg Strength', 'Longer field goals and punts', { KPW: .85, KAC: .15 }], ['accuracy', 'Accuracy', 'Fewer misses', { KAC: .85, KPW: .15 }]] }
+  ];
+  var GROUP_OF = {}; PGROUPS.forEach(function (g) { g.pos.forEach(function (pos) { GROUP_OF[pos] = g; }); });
+  E.PGROUPS = PGROUPS; E.GROUP_OF = GROUP_OF; E.INTEN = INTEN; E.PRAC_BUDGET = PRAC_BUDGET; E.SESSION_COST = SESSION_COST; E.MAX_HRS = MAX_HRS; E.FOCUS_MAX = FOCUS_MAX;
+  function drillOf(g, key) { for (var i = 0; i < g.drills.length; i++) if (g.drills[i][0] === key) return g.drills[i]; return g.drills[0]; }
+  E.drillOf = drillOf;
+  E.planHours = function (plan) { var s = 0; PGROUPS.forEach(function (g) { s += plan.hrs[g.k] || 0; }); return s + (plan.gp ? SESSION_COST.gp : 0) + (plan.cond ? SESSION_COST.cond : 0); };
+  function groupPlayers(G, ab, g) { return teamPlayers(G, ab).filter(function (p) { return g.pos.indexOf(p.pos) >= 0; }).sort(function (a, b) { return b.ovr - a.ovr; }); }
+  E.groupPlayers = groupPlayers;
+  // Staff recommendation: also used every week by the 31 AI teams
+  function autoPlan(G, ab) {
+    var plan = { hrs: {}, int: {}, drill: {}, gp: 0, cond: 0, fp: [] }, W = {}, tw = 0, avail = 22;
+    PGROUPS.forEach(function (g) {
+      var ps = groupPlayers(G, ab, g), st = ps.slice(0, g.st);
+      var so = st.length ? avg(st.map(function (p) { return p.ovr; })) : 60;
+      var up = 0; ps.forEach(function (p) { if (p.age <= 25) up += Math.max(0, p.pot - p.ovr) / 10; });
+      var base = g.k === 'ST' ? .45 : (g.k === 'QB' || g.k === 'OL' || g.k === 'DL') ? 1.3 : (g.k === 'WR' || g.k === 'CB') ? 1.1 : 1;
+      W[g.k] = base * (1 + clamp((76 - so) / 25, -.3, .6) + Math.min(.5, up * .08)); tw += W[g.k];
+      // drill: attack the starters' weakest trained skill
+      var best = 'bal', bestV = 1e9, all = [];
+      g.drills.forEach(function (d) {
+        if (d[0] === 'bal') return;
+        var v = 0, ws = 0, k;
+        for (k in d[3]) { var vals = st.filter(function (p) { return p.a[k] != null; }).map(function (p) { return p.a[k]; }); if (vals.length) { v += avg(vals) * d[3][k]; ws += d[3][k]; } }
+        if (ws > 0) { v /= ws; all.push(v); if (v < bestV) { bestV = v; best = d[0]; } }
+      });
+      var spread = all.length ? Math.max.apply(null, all) - Math.min.apply(null, all) : 0;
+      plan.drill[g.k] = spread >= 3 ? best : 'bal';
+      plan.int[g.k] = 'normal';
+    });
+    var used = 0;
+    PGROUPS.forEach(function (g) { var h = Math.max(1, Math.min(MAX_HRS, Math.round(W[g.k] / tw * avail))); plan.hrs[g.k] = h; used += h; });
+    var order = PGROUPS.slice().sort(function (a, b) { return W[b.k] - W[a.k]; }), gi = 0;
+    while (used > avail && gi < 50) { var g1 = order[order.length - 1 - (gi % order.length)]; if (plan.hrs[g1.k] > 1) { plan.hrs[g1.k]--; used--; } gi++; }
+    gi = 0; while (used < avail && gi < 50) { var g2 = order[gi % order.length]; if (plan.hrs[g2.k] < MAX_HRS) { plan.hrs[g2.k]++; used++; } gi++; }
+    plan.fp = teamPlayers(G, ab).filter(function (p) { return p.age <= 25 && p.pot - p.ovr >= 5 && !p.inj && GROUP_OF[p.pos] && GROUP_OF[p.pos].k !== 'ST'; }).sort(function (a, b) { return (b.pot - b.ovr) * (b.eth || 70) - (a.pot - a.ovr) * (a.eth || 70); }).slice(0, FOCUS_MAX).map(function (p) { return p.id; });
+    return plan;
+  }
+  E.autoPlan = autoPlan;
+  function fixPlan(G, plan) {
+    plan.hrs = plan.hrs || {}; plan.int = plan.int || {}; plan.drill = plan.drill || {}; plan.fp = (plan.fp || []).filter(function (id) { return G.players[id] && G.players[id].tm === G.user.ab; }).slice(0, FOCUS_MAX);
+    PGROUPS.forEach(function (g) { if (plan.hrs[g.k] == null) plan.hrs[g.k] = g.def; if (!INTEN[plan.int[g.k]]) plan.int[g.k] = 'normal'; if (!plan.drill[g.k]) plan.drill[g.k] = 'bal'; });
+    return plan;
+  }
+  E.migrate = function (G) {
+    var u = G.user;
+    if (!u.plan) {
+      u.plan = autoPlan(G, u.ab);
+      if (u.focus === 'gameplan') u.plan.gp = 1;
+      if (u.focus === 'conditioning') u.plan.cond = 1;
+      if (u.intensity === 'hard' || u.intensity === 'light') PGROUPS.forEach(function (g) { u.plan.int[g.k] = u.intensity; });
+    }
+    fixPlan(G, u.plan);
+    for (var id in G.players) ensureP(G, G.players[id]);
+    if (!G.v || G.v < 2) G.v = 2;
+    return G;
+  };
+  function growthD(p, mult, devCulture) {
+    var age = p.age, ageF = age <= 23 ? 1.4 : age <= 26 ? 1.0 : age <= 29 ? .45 : age <= 31 ? .05 : -.45;
+    var mF = .7 + p.mor / 100 * .6, cF = .8 + devCulture / 100 * .5, eF = .75 + (p.eth == null ? 70 : p.eth) / 100 * .35;
+    var gap = p.pot - p.ovr, d;
+    if (ageF > 0) d = .062 * ageF * mult * mF * cF * eF * (gap > 0 ? (.4 + gap / 10) : .1) * rf(.2, 1.8);
+    else d = .07 * ageF * rf(.3, 1.7) / (mult > 1.2 ? 1.3 : 1) * (1.25 - eF * .25);
+    if (p.inj) d *= .3;
+    return d;
+  }
+  function applyGrowth(p, d, w) {
+    var keys = allAttrs(p.pos).filter(function (k) { return p.a[k] != null; }), ws = 0, wn = {};
+    keys.forEach(function (k) { ws += w[k] || 0; });
+    var coach = .85 + (p.coa == null ? 70 : p.coa) / 100 * .3;
+    keys.forEach(function (k) { wn[k] = ws > 0 ? (w[k] || 0) / ws : 0; });
+    keys.forEach(function (k) {
+      var m;
+      if (ws <= 0) m = 1;
+      else if (d >= 0) m = .35 + 2.6 * wn[k] * coach;
+      else m = 1.15 - .9 * wn[k];
+      p.a[k] = clamp(p.a[k] + d * m * rf(.6, 1.4), 25, 99);
+    });
+  }
+  function runPractice(G, ab, plan, devCulture, isUser) {
+    var sumH = 0; PGROUPS.forEach(function (g) { sumH += plan.hrs[g.k] || 0; });
+    var sess = (plan.gp ? SESSION_COST.gp : 0) + (plan.cond ? SESSION_COST.cond : 0);
+    var scale = sumH + sess > PRAC_BUDGET && sumH > 0 ? Math.max(0, PRAC_BUDGET - sess) / sumH : 1;
+    var rep = isUser ? { season: G.season, label: G.phase === 'playoffs' ? 'Playoff week' : 'Week ' + G.week, groups: {}, inj: [], hrs: Math.round(E.planHours(plan) * 10) / 10 } : null;
+    teamPlayers(G, ab).forEach(function (p) {
+      ensureP(G, p);
+      var g = GROUP_OF[p.pos]; if (!g) return;
+      var h = (plan.hrs[g.k] || 0) * scale, it = INTEN[plan.int[g.k]] || INTEN.normal, dr = drillOf(g, plan.drill[g.k]);
+      var isF = plan.fp.indexOf(p.id) >= 0;
+      var before = isUser ? snapA(p) : null, w0 = wovr(p);
+      var repsF = .3 + .7 * Math.pow(h / 2.2, .85);
+      var d = growthD(p, repsF * it.g * (isF ? 1.6 : 1), devCulture);
+      applyGrowth(p, d, dr[3]);
+      p.ovr = calcOvr(p); if (p.ovr > p.pot) p.pot = p.ovr;
+      var dw = wovr(p) - w0; p.prog = (p.prog || 0) + dw;
+      // fatigue & injury
+      var load = h * it.load * (isF ? 1.15 : 1);
+      p.fat = clamp((p.fat || 0) * .45 + load, 0, 100);
+      var injN = 0;
+      if (!p.inj && h > 0 && rnd() < .0005 * h * it.inj * (1 + p.fat / 40)) { injN = pick([1, 1, 1, 2, 2, 3]); p.inj = injN; }
+      // morale reaction to the workload (personality matters)
+      var pm = it.mor;
+      if (pm < 0 && (p.pers === 'COMP' || p.pers === 'PRO')) pm *= .5;
+      if (pm < 0 && (p.pers === 'DIVA' || p.pers === 'CANCER' || p.pers === 'HOT')) pm *= 1.7;
+      p.mor = clamp(p.mor + pm + (h >= 5 ? -.4 : 0) + (isF ? .5 : 0), 0, 100);
+      if (isUser) {
+        if (!p.dh) p.dh = [Math.round(w0 * 10) / 10];
+        p.dh.push(Math.round(wovr(p) * 10) / 10); if (p.dh.length > 24) p.dh.shift();
+        var at = [], k; for (k in before) { var dd = p.a[k] - before[k]; if (Math.abs(dd) >= .05) at.push([k, Math.round(dd * 100) / 100]); }
+        at.sort(function (a, b) { return Math.abs(b[1]) - Math.abs(a[1]); });
+        (rep.groups[g.k] = rep.groups[g.k] || []).push({ id: p.id, d: Math.round(dw * 100) / 100, at: at.slice(0, 3), fat: Math.round(p.fat), inj: injN, f: isF ? 1 : 0 });
+        if (injN) rep.inj.push({ id: p.id, w: injN });
+      }
+    });
+    if (isUser) for (var gk in rep.groups) rep.groups[gk].sort(function (a, b) { return b.d - a.d; });
+    return rep;
+  }
+  E.runPractice = runPractice;
+  function practiceWeek(G, playoffs) {
+    var me = G.user.ab;
+    G.order.forEach(function (ab) {
+      var u = ab === me;
+      if (playoffs && !u && G.playoffs && G.playoffs.elim[ab]) return;
+      var rep = runPractice(G, ab, u ? G.user.plan : autoPlan(G, ab), u ? G.user.dev : 50, u);
+      if (u) {
+        G.user.prac = rep;
+        var all = []; for (var k in rep.groups) rep.groups[k].forEach(function (r) { if (k !== 'ST') all.push({ id: r.id, d: r.d }); });
+        all.sort(function (a, b) { return b.d - a.d; }); G.user.lastReport = all.slice(0, 8);
+        if (rep.inj.length) addNews(G, 'Practice injur' + (rep.inj.length > 1 ? 'ies' : 'y') + ': ' + rep.inj.map(function (x) { var p = G.players[x.id]; return p.pos + ' ' + p.ln + ' (' + x.w + ' wk)'; }).join(', ') + '.', 'loss');
+        G.user.plan.fp = G.user.plan.fp.filter(function (id) { return G.players[id] && G.players[id].tm === me; });
+      } else if (!playoffs) { autoDepth(G, ab); aiFillRoster(G, ab); }
+    });
+  }
+  E.practiceWeek = practiceWeek;
+
   function aiFillRoster(G, ab) {
     var t = G.teams[ab];
     for (var pos in LINEUP) {
@@ -594,6 +840,7 @@ var HC = (function () {
     var mv = marketValue(p), intr = E.interest(G, p, ab);
     var ask = mv * (1.12 - intr / 100 * .25);
     if (p.tm === ab) ask *= 1 + (60 - p.mor) / 250;
+    ask *= ({ DIVA: 1.12, CANCER: 1.06, HOT: 1.03, TEAM: .94, PRO: .97, LEADER: .98 })[p.pers] || 1;
     var yrs = p.age <= 26 ? 5 : p.age <= 29 ? 4 : p.age <= 31 ? 3 : p.age <= 33 ? 2 : 1;
     if (p.ovr < 68) yrs = Math.min(yrs, 2);
     return { sal: Math.max(1000, Math.round(ask / 50) * 50), yrs: yrs, interest: intr };
@@ -609,7 +856,7 @@ var HC = (function () {
     if (ask.interest < 15 && sal < ask.sal * 1.2) return { ok: false, msg: p.fn + ' ' + p.ln + ' has little interest in your situation (interest ' + ask.interest + '/100). Only a big overpay will do.' };
     var yrPen = Math.abs(yrs - ask.yrs) * .03, need = ask.sal * (1 + yrPen) * (1 - ask.interest / 100 * .06);
     if (sal >= need) { sign(G, p, ab, sal, yrs); return { ok: true, msg: p.fn + ' ' + p.ln + ' accepts! ' + fmtM(sal) + '/yr for ' + yrs + ' yr' + (yrs > 1 ? 's' : '') + '.' }; }
-    if (sal < ask.sal * .8) { if (p.tm === ab) p.mor = clamp(p.mor - 4, 0, 100); return { ok: false, msg: 'That offer is insulting to ' + p.ln + "'s camp." + (p.tm === ab ? ' (His morale drops.)' : ''), counter: Math.round(need / 50) * 50, cyrs: ask.yrs }; }
+    if (sal < ask.sal * .8) { if (p.tm === ab) p.mor = clamp(p.mor - 4 * (p.pers === 'DIVA' || p.pers === 'HOT' || p.pers === 'CANCER' ? 2 : p.pers === 'TEAM' || p.pers === 'PRO' ? .5 : 1), 0, 100); return { ok: false, msg: 'That offer is insulting to ' + p.ln + "'s camp." + (p.tm === ab ? ' (His morale drops.)' : ''), counter: Math.round(need / 50) * 50, cyrs: ask.yrs }; }
     var counter = Math.round(need * rf(.99, 1.03) / 50) * 50;
     return { ok: false, msg: p.ln + "'s agent counters at " + fmtM(counter) + '/yr for ' + ask.yrs + ' yrs.', counter: counter, cyrs: ask.yrs };
   };
@@ -653,7 +900,7 @@ var HC = (function () {
         { l: 'Praise him publicly', d: 'His morale ↑ · Unity ↑', fx: [['mor', c.id, 4], ['unity', 2]] }] };
     },
     late: function (G, ab) {
-      var c = pick(topBy(G, ab, function () { return true; }).slice(0, 35));
+      var pool = topBy(G, ab, function () { return true; }).slice(0, 35), c = wpick(pool, function (p) { return p.eth < 55 || p.pers === 'DIVA' || p.pers === 'CANCER' ? 5 : p.pers === 'PRO' || p.pers === 'LEADER' ? .2 : 1; });
       return { title: 'Late to the Team Meeting', who: c.id, text: nm(c) + ' (' + c.pos + ') walked into this morning\'s team meeting 20 minutes late. The whole room noticed.', ch: [
         { l: 'Fine him', d: 'Discipline ↑↑ · his morale ↓', fx: [['disc', 6], ['mor', c.id, -7]] },
         { l: 'Handle it privately', d: 'Unity ↑ · Discipline ↓', fx: [['unity', 3], ['disc', -2], ['mor', c.id, 2]] },
@@ -692,11 +939,32 @@ var HC = (function () {
         { l: 'Let the offense have their night', d: 'Offense morale ↑ · defense morale ↓', fx: [['unitM', 'off', 3], ['unitM', 'def', -2]] }] };
     },
     social: function (G, ab) {
-      var c = pick(topBy(G, ab, function (p) { return p.mor < 60; }).slice(0, 8)); if (!c) return null;
+      var c = pick(topBy(G, ab, function (p) { return p.mor < 60 && p.pers !== 'PRO' && p.pers !== 'TEAM'; }).slice(0, 8)); if (!c) return null;
       return { title: 'Cryptic Social Media Post', who: c.id, text: nm(c) + ' posted a cryptic message about "needing a fresh start." The media is running with it.', ch: [
         { l: 'Fine him for the distraction', d: 'Discipline ↑ · his morale ↓↓', fx: [['disc', 5], ['mor', c.id, -9]] },
         { l: 'Sit down with him', d: 'His morale ↑↑ · Unity ↑', fx: [['mor', c.id, 10], ['unity', 1]] },
         { l: 'Ignore it', d: 'Discipline ↓', fx: [['disc', -2]] }] };
+    },
+    outburst: function (G, ab) {
+      var c = topBy(G, ab, function (p) { return (p.pers === 'HOT' || p.pers === 'CANCER') && p.ovr >= 65; })[0]; if (!c) return null;
+      return { title: 'Sideline Blow-Up', who: c.id, text: nm(c) + ' (' + c.pos + ', ' + PERS[c.pers].n + ') screamed at a position coach in practice and had to be separated from a teammate. Cameras caught part of it.', ch: [
+        { l: 'Suspend him for a quarter', d: 'Discipline ↑↑↑ · his morale ↓↓ · Unity ↑', fx: [['disc', 8], ['mor', c.id, -10], ['unity', 2]] },
+        { l: 'Private talk, no punishment', d: 'His morale ↑ · Discipline ↓↓', fx: [['mor', c.id, 6], ['disc', -5]] },
+        { l: 'Let the team captains handle it', d: 'Unity ↑ · Discipline ↑', fx: [['unity', 3], ['disc', 2], ['mor', c.id, -3]] }] };
+    },
+    diva: function (G, ab) {
+      var c = topBy(G, ab, function (p) { return p.pers === 'DIVA' && p.ovr >= 68; })[0]; if (!c) return null;
+      return { title: 'He Wants the Ball', who: c.id, text: nm(c) + ' (' + c.pos + ', Me-First) told reporters he "can\'t help the team if they don\'t feed me." Teammates are rolling their eyes.', ch: [
+        { l: 'Promise to feature him', d: 'His morale ↑↑ · Unity ↓', fx: [['mor', c.id, 12], ['unity', -3]] },
+        { l: '"Nobody is bigger than the team."', d: 'Unity ↑↑ · Discipline ↑ · his morale ↓↓', fx: [['unity', 4], ['disc', 3], ['mor', c.id, -10]] },
+        { l: 'Fine him for the comments', d: 'Discipline ↑↑ · his morale ↓↓↓', fx: [['disc', 6], ['mor', c.id, -15]] }] };
+    },
+    leader: function (G, ab) {
+      var c = topBy(G, ab, function (p) { return p.pers === 'LEADER' || p.ldr >= 82; })[0]; if (!c) return null;
+      return { title: 'A Leader Steps Up', who: c.id, text: nm(c) + ' (' + c.pos + ', Leadership ' + c.ldr + ') wants to be a voice in the room this week and asks to address the team before Saturday walkthrough.', ch: [
+        { l: 'Give him the floor', d: 'Unity ↑↑ · team morale ↑', fx: [['unity', 5], ['team', 1.5], ['mor', c.id, 4]] },
+        { l: 'Name him a team captain', d: 'Unity ↑ · Discipline ↑ · his morale ↑↑', fx: [['unity', 3], ['disc', 3], ['mor', c.id, 8]] },
+        { l: '"I run this locker room."', d: 'Discipline ↑ · his morale ↓', fx: [['disc', 3], ['mor', c.id, -6]] }] };
     },
     rookies: function (G, ab) {
       var r = topBy(G, ab, function (p) { return p.exp <= 1 && p.pot - p.ovr >= 5; })[0]; if (!r) return null;
@@ -715,6 +983,11 @@ var HC = (function () {
   };
   E.makePress = function (G, won, lost) {
     var me = G.user.ab, q = G.players[G.teams[me].depth.QB[0]];
+    var dv = lost ? topBy(G, me, function (p) { return E.isAttitude(p) && p.mor < 55 && p.ovr >= 68; })[0] : null;
+    if (dv && rnd() < .45) return { title: 'Post-Game Press Conference', press: 1, who: dv.id, text: 'After the loss, ' + nm(dv) + ' (' + PERS[dv.pers].n + ') told reporters at his locker that "some people need to look in the mirror, starting with the play-calling." A reporter asks for your response.', ch: [
+      { l: '"We handle that in-house."', d: 'Unity ↑ · his morale ↓', fx: [['unity', 2], ['mor', dv.id, -4]] },
+      { l: 'Call him out publicly', d: 'Discipline ↑↑ · his morale ↓↓↓ · Unity ↓', fx: [['disc', 6], ['mor', dv.id, -14], ['unity', -2]] },
+      { l: '"He\'s a competitor. He cares."', d: 'His morale ↑ · Discipline ↓', fx: [['mor', dv.id, 6], ['disc', -3]] }] };
     if (lost) return { title: 'Post-Game Press Conference', press: 1, who: q.id, text: 'Tough loss. A reporter asks: "Coach, is ' + nm(q) + ' still your guy at quarterback?"', ch: [
       { l: '"He\'s our quarterback. Period."', d: 'QB morale ↑↑ · Unity ↑', fx: [['mor', q.id, 10], ['unity', 2]] },
       { l: '"Every job is open this week."', d: 'Discipline ↑↑ · QB morale ↓↓', fx: [['disc', 6], ['mor', q.id, -12], ['team', -1]] },
@@ -731,7 +1004,7 @@ var HC = (function () {
     (c.fx || []).forEach(function (f) {
       var t = f[0];
       if (t === 'disc' || t === 'unity' || t === 'dev') G.user[t] = clamp(G.user[t] + f[1], 0, 100);
-      else if (t === 'mor') { var p = G.players[f[1]]; if (p) p.mor = clamp(p.mor + f[2], 0, 100); }
+      else if (t === 'mor') { var p = G.players[f[1]]; if (p) { var sc = f[2] < 0 ? ({ HOT: 1.5, DIVA: 1.5, CANCER: 1.6, PRO: .6, TEAM: .7 })[p.pers] || 1 : 1; p.mor = clamp(p.mor + f[2] * sc, 0, 100); } }
       else if (t === 'team') teamPlayers(G, me).forEach(function (p) { p.mor = clamp(p.mor + f[1], 0, 100); });
       else if (t === 'unitM') teamPlayers(G, me).forEach(function (p) { if ((f[1] === 'off' ? OFF : DEF)[p.pos]) p.mor = clamp(p.mor + f[2], 0, 100); });
       else if (t === 'promote') { var pp = G.players[f[1]], dd = G.teams[me].depth[pp.pos], i = dd.indexOf(pp.id); if (i > 0) { dd.splice(i, 1); dd.unshift(pp.id); } }
@@ -775,6 +1048,7 @@ var HC = (function () {
     var P = G.playoffs, games = P.rounds[P.round];
     games.forEach(function (g) { if (g.hs === null) { var gs = E.quickSim(G, g.h, g.a, true, g.neutral); E.finalizeGame(G, gs, g); } });
     for (var id in G.players) { var p = G.players[id]; if (p.inj > 0) p.inj--; }
+    if (P.round < 3) { E.migrate(G); practiceWeek(G, true); }
     G.user.pressPending = null;
     var winners = {};
     games.forEach(function (g) { var w = g.hs > g.as ? g.h : g.a, l = w === g.h ? g.a : g.h; P.elim[l] = P.round + 1; (winners[g.conf] = winners[g.conf] || []).push(w); if (l === G.user.ab) addNews(G, 'Season over: the ' + G.teams[l].name + ' fall in the ' + E.roundName(P.round) + '.', 'loss'); });
@@ -817,6 +1091,7 @@ var HC = (function () {
     ids.sort(function (a, b) { return G.players[a].media - G.players[b].media; });
     ids.forEach(function (id, i) { G.players[id].media = i + 1; });
     G.dclass = ids;
+    ids.forEach(function (id) { ensureP(G, G.players[id]); });
   };
   var SC_MULT = [1, .55, .22, 0], SC_COST = [3, 4, 6];
   E.SC_COST = SC_COST;
@@ -905,6 +1180,8 @@ var HC = (function () {
     var fas = faList(G); fas.slice(320).forEach(function (p) { delete G.players[p.id]; });
     G.sched = G.sched.map(function (wk) { return wk.map(function (g) { return { h: g.a, a: g.h, hs: null, as: null }; }); });
     G.phase = 'regular'; G.week = 1; G.playoffs = null; G.draft = null; G.user.sp += 40;
+    for (id in G.players) { var q = G.players[id]; ensureP(G, q); q.a0 = snapA(q); q.fat = 0; q.dh = q.tm === me ? [Math.round(wovr(q) * 10) / 10] : undefined; }
+    G.user.prac = null; G.user.plan.fp = G.user.plan.fp.filter(function (pid) { return G.players[pid] && G.players[pid].tm === me; });
     E.genDraftClass(G);
     addNews(G, 'Welcome to the ' + G.season + ' season! Salary cap: ' + fmtM(G.cap) + '.' + (left.length ? ' Left in free agency: ' + left.slice(0, 4).map(function (p) { return p.ln; }).join(', ') + (left.length > 4 ? ' +' + (left.length - 4) : '') + '.' : '') + (retired.length ? ' Retired: ' + retired.map(function (p) { return p.ln; }).join(', ') + '.' : ''), 'big');
     E.newWeeklyEvent(G);
