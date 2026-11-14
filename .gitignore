@@ -2,3 +2,4 @@ node_modules/
 raw/
 *.log
 screenshots/
+shot_*.png
