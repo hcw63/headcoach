@@ -197,3 +197,29 @@ input[type=range]{width:100%;accent-color:var(--acc)}
 .ctag{display:inline-block;margin-left:4px;padding:1px 6px;border-radius:6px;font-size:10.5px;font-weight:800;letter-spacing:.03em;background:#1c2840;color:#9fb3d1}
 .ctag.c-Leader{background:#3a2f12;color:#fde68a}.ctag.c-Clutch{background:#10324a;color:#7dd3fc}.ctag.c-Attitude{background:#4a1d24;color:#fecaca}.ctag.c-Grinder{background:#1d3a2a;color:#bbf7d0}.ctag.c-Rattles{background:#3a2a12;color:#fdba74}.ctag.c-Lazy{background:#2a2a2a;color:#a3a3a3}
 @media (max-width:1400px){.pgm{gap:10px}}
+/* trades & free agency */
+.dtag{display:inline-block;padding:3px 9px;border-radius:99px;font-size:11.5px;font-weight:800;letter-spacing:.03em}
+.dtag.d-contend{background:#14301f;color:#86efac}.dtag.d-middle{background:#1c2840;color:#9fb3d1}.dtag.d-rebuild{background:#3a2a12;color:#fdba74}
+.tpick{display:flex;gap:6px;overflow-x:auto;padding:4px 2px 8px;-webkit-overflow-scrolling:touch}
+.tpick button{flex:none;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:56px;padding:6px 4px;border-radius:12px;border:1px solid var(--line);background:#0f1726;color:#b5c3da;font-size:11px;font-weight:700}
+.tpick button.on{border-color:var(--acc);background:color-mix(in srgb,var(--acc) 25%,#0f1726);color:#fff;box-shadow:0 0 0 1px var(--acc)}
+.tgrid{display:grid;grid-template-columns:minmax(0,1fr) 290px minmax(0,1fr);gap:12px;align-items:start}
+.tcol{padding:12px}.tmid{padding:14px;position:sticky;top:84px}
+.tlist{max-height:600px;overflow-y:auto;-webkit-overflow-scrolling:touch;margin:0 -4px;padding:0 4px}
+.ta{display:flex;align-items:center;gap:8px;padding:7px 6px;border-radius:10px;cursor:pointer;min-height:50px;border:1px solid transparent}
+.ta:active{background:#142036}.ta.on{background:color-mix(in srgb,var(--acc) 18%,transparent);border-color:color-mix(in srgb,var(--acc) 50%,transparent)}
+.tan{flex:1;min-width:0;font-size:13px}.tan b{white-space:nowrap}
+.tadd{width:32px;height:32px;border-radius:9px;background:#1b263b;display:inline-flex;align-items:center;justify-content:center;font-weight:800;flex:none;font-size:12px}
+.ta.on .tadd{background:var(--acc);color:#fff}
+.tsec{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.1em;margin:12px 4px 4px}
+.pkb{display:inline-flex;align-items:center;justify-content:center;width:34px;height:26px;border-radius:7px;background:#2e1a3d;color:#e9d5ff;font-family:var(--cond);font-weight:800;font-size:14px;flex:none}.pkb.sm{width:28px;height:20px;font-size:12px}
+.di{display:flex;align-items:center;gap:6px;padding:7px 8px;border-radius:9px;background:#0d1524;border:1px solid var(--line);margin-top:6px;font-size:12.5px;cursor:pointer;min-height:40px}
+.di .x{margin-left:auto;color:var(--dim);padding-left:6px}.di.nox{cursor:default}
+.vbar{display:flex;height:10px;border-radius:9px;overflow:hidden;background:#1c2638;margin-top:4px}.vbar i{background:#ef4444}.vbar b{background:#22c55e}
+.capimp{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.capimp div{background:#0d1524;border:1px solid var(--line);border-radius:10px;padding:8px}
+.capimp span{display:block;font-size:10.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}.capimp b{font-size:15px}.capimp em{display:block;font-style:normal;font-size:11px;color:var(--dim)}
+.tmsg{margin-top:12px;padding:10px;border-radius:10px;background:#1b1420;border:1px solid #4a2a35;font-size:13px;color:#fecaca}.tmsg.good{background:#11251a;border-color:#1f5a35;color:#bbf7d0}
+.tsel{background:#121b2b;color:var(--txt);border:1px solid var(--line);border-radius:9px;min-height:36px;padding:0 8px;font-weight:700}
+.offer{background:#0f1726;border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px}
+@media (max-width:1100px){.tgrid{grid-template-columns:1fr 1fr}.tmid{grid-column:1/3;position:static;order:-1}}
+.modal .mf{flex-wrap:wrap}

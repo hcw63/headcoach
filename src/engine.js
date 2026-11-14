@@ -532,6 +532,7 @@ var HC = (function () {
     for (id in G.players) { var p0 = G.players[id]; if (p0.inj > 0) p0.inj--; }
     practiceWeek(G, false);
     G.user.gameplanBonus = 0;
+    weeklyTrades(G); tradeRequests(G);
     var res = G.user.lastResult, Lm = lineup(G, me), starters = {}, pos;
     for (pos in Lm) Lm[pos].forEach(function (p) { starters[p.id] = 1; });
     var cancers = 0, leaders = 0;
@@ -719,7 +720,8 @@ var HC = (function () {
     }
     fixPlan(G, u.plan);
     for (var id in G.players) ensureP(G, G.players[id]);
-    if (!G.v || G.v < 2) G.v = 2;
+    E.migrateTrades(G);
+    if (!G.v || G.v < 3) G.v = 3;
     return G;
   };
   function growthD(p, mult, devCulture) {
@@ -847,6 +849,7 @@ var HC = (function () {
   };
   E.rosterLimit = function (G) { return (G.phase === 'regular' || G.phase === 'playoffs') ? 53 : 90; };
   E.offer = function (G, p, ab, sal, yrs) {
+    if (G.phase === 'freeagency' && p.tm === 'FA' && G.fa && ab === G.user.ab) return E.faBid(G, p, sal, yrs);
     var ask = E.askFor(G, p, ab), limit = E.rosterLimit(G);
     if (p.tm !== ab && teamPlayers(G, ab).length >= limit) return { ok: false, msg: 'Your roster is full (' + limit + ' max). Release a player first.' };
     var curSal = p.tm === ab ? p.sal : 0;
@@ -864,7 +867,7 @@ var HC = (function () {
   E.fmtM = fmtM;
   function sign(G, p, ab, sal, yrs) {
     var wasFA = p.tm !== ab;
-    p.tm = ab; p.sal = sal; p.yrs = yrs; p.mor = clamp(p.mor + 10, 0, 100); p.wantsDeal = 0; p.fresh = (G.phase === 'offseason' || G.phase === 'draft') ? 1 : 0;
+    p.tm = ab; p.sal = sal; p.yrs = yrs; p.mor = clamp(p.mor + 10, 0, 100); p.wantsDeal = 0; p.fresh = (G.phase === 'offseason' || G.phase === 'draft' || G.phase === 'freeagency') ? 1 : 0; p.tradeReq = 0; p.lastTm = undefined;
     if (wasFA && !p.num) p.num = '' + ri(1, 99);
     syncDepth(G, ab);
     addNews(G, (wasFA ? 'SIGNED: The ' + G.teams[ab].name + ' sign ' : 'EXTENDED: The ' + G.teams[ab].name + ' extend ') + p.pos + ' ' + p.fn + ' ' + p.ln + ' (' + fmtM(sal) + ' x ' + yrs + ').', 'deal');
@@ -945,6 +948,13 @@ var HC = (function () {
         { l: 'Sit down with him', d: 'His morale ↑↑ · Unity ↑', fx: [['mor', c.id, 10], ['unity', 1]] },
         { l: 'Ignore it', d: 'Discipline ↓', fx: [['disc', -2]] }] };
     },
+    tradereq: function (G, ab) {
+      var c = topBy(G, ab, function (p) { return p.tradeReq && !p.block; })[0]; if (!c) return null;
+      return { title: 'Trade Request', who: c.id, text: nm(c) + ' (' + c.pos + ', ' + (PERS[c.pers] ? PERS[c.pers].n : '') + ', morale ' + Math.round(c.mor) + ') has formally asked to be traded. His agent is making noise in the media.', ch: [
+        { l: 'Put him on the trade block', d: 'His morale ↑ · teams can make offers', fx: [['block', c.id], ['mor', c.id, 6]] },
+        { l: '"He is under contract. He plays."', d: 'Discipline ↑ · his morale ↓↓ · Unity ↓', fx: [['disc', 4], ['mor', c.id, -10], ['unity', -2]] },
+        { l: 'Promise him a bigger role', d: 'His morale ↑↑ · request withdrawn · Unity ↓', fx: [['mor', c.id, 14], ['unreq', c.id], ['unity', -2]] }] };
+    },
     outburst: function (G, ab) {
       var c = topBy(G, ab, function (p) { return (p.pers === 'HOT' || p.pers === 'CANCER') && p.ovr >= 65; })[0]; if (!c) return null;
       return { title: 'Sideline Blow-Up', who: c.id, text: nm(c) + ' (' + c.pos + ', ' + PERS[c.pers].n + ') screamed at a position coach in practice and had to be separated from a teammate. Cameras caught part of it.', ch: [
@@ -977,6 +987,7 @@ var HC = (function () {
   E.newWeeklyEvent = function (G) {
     if (G.phase !== 'regular') { G.user.pendingEvent = null; return; }
     var keys = Object.keys(EVENTS), tries = 0, ev = null, k;
+    if (teamPlayers(G, G.user.ab).some(function (p) { return p.tradeReq && !p.block; }) && rnd() < .6 && G.user.lastEvKey !== 'tradereq') { ev = EVENTS.tradereq(G, G.user.ab); k = 'tradereq'; }
     while (!ev && tries++ < 15) { k = pick(keys); if (k === G.user.lastEvKey) continue; ev = EVENTS[k](G, G.user.ab); }
     if (ev) { ev.key = k; G.user.lastEvKey = k; }
     G.user.pendingEvent = ev;
@@ -1005,6 +1016,8 @@ var HC = (function () {
       var t = f[0];
       if (t === 'disc' || t === 'unity' || t === 'dev') G.user[t] = clamp(G.user[t] + f[1], 0, 100);
       else if (t === 'mor') { var p = G.players[f[1]]; if (p) { var sc = f[2] < 0 ? ({ HOT: 1.5, DIVA: 1.5, CANCER: 1.6, PRO: .6, TEAM: .7 })[p.pers] || 1 : 1; p.mor = clamp(p.mor + f[2] * sc, 0, 100); } }
+      else if (t === 'block') { var pb = G.players[f[1]]; if (pb) pb.block = 1; }
+      else if (t === 'unreq') { var pu = G.players[f[1]]; if (pu) pu.tradeReq = 0; }
       else if (t === 'team') teamPlayers(G, me).forEach(function (p) { p.mor = clamp(p.mor + f[1], 0, 100); });
       else if (t === 'unitM') teamPlayers(G, me).forEach(function (p) { if ((f[1] === 'off' ? OFF : DEF)[p.pos]) p.mor = clamp(p.mor + f[2], 0, 100); });
       else if (t === 'promote') { var pp = G.players[f[1]], dd = G.teams[me].depth[pp.pos], i = dd.indexOf(pp.id); if (i > 0) { dd.splice(i, 1); dd.unshift(pp.id); } }
@@ -1052,7 +1065,7 @@ var HC = (function () {
     G.user.pressPending = null;
     var winners = {};
     games.forEach(function (g) { var w = g.hs > g.as ? g.h : g.a, l = w === g.h ? g.a : g.h; P.elim[l] = P.round + 1; (winners[g.conf] = winners[g.conf] || []).push(w); if (l === G.user.ab) addNews(G, 'Season over: the ' + G.teams[l].name + ' fall in the ' + E.roundName(P.round) + '.', 'loss'); });
-    if (P.round === 3) { var g0 = games[0]; P.champ = g0.hs > g0.as ? g0.h : g0.a; P.elim[P.champ] = 5; addNews(G, 'SUPER BOWL LXI: The ' + G.teams[P.champ].city + ' ' + G.teams[P.champ].name + ' are world champions!', 'big'); E.startDraft(G); return; }
+    if (P.round === 3) { var g0 = games[0]; P.champ = g0.hs > g0.as ? g0.h : g0.a; P.elim[P.champ] = 5; addNews(G, 'SUPER BOWL LXI: The ' + G.teams[P.champ].city + ' ' + G.teams[P.champ].name + ' are world champions!', 'big'); E.startFA(G); return; }
     var next = [];
     if (P.round === 2) next.push({ h: winners.AFC[0], a: winners.NFC[0], hs: null, as: null, conf: 'SB', neutral: true });
     else ['AFC', 'NFC'].forEach(function (c) {
@@ -1110,10 +1123,13 @@ var HC = (function () {
     G.phase = 'draft';
     var P = G.playoffs, teams = G.order.slice();
     teams.sort(function (a, b) { var ea = P.elim[a] || 0, eb = P.elim[b] || 0; if (ea !== eb) return ea - eb; return winPct(G.teams[a]) - winPct(G.teams[b]) || ((G.teams[a].pf - G.teams[a].pa) - (G.teams[b].pf - G.teams[b].pa)); });
-    var order = [];
-    for (var r = 0; r < 7; r++) teams.forEach(function (ab, i) { order.push({ r: r + 1, n: i + 1, ab: ab, pid: null }); });
-    G.draft = { order: order, cur: 0, year: G.season + 1 };
-    addNews(G, 'The ' + (G.season + 1) + ' NFL Draft is here. The ' + G.teams[teams[0]].name + ' are on the clock with the #1 pick.', 'big');
+    var order = [], yr = G.season + 1; ensurePicks(G); addPickYear(G, yr);
+    var own = {}; G.picks.forEach(function (k) { if (k.yr === yr) own[k.r + '-' + k.orig] = k.own; });
+    for (var r = 0; r < 7; r++) teams.forEach(function (ab, i) { var o = own[(r + 1) + '-' + ab] || ab; order.push({ r: r + 1, n: i + 1, ab: o, orig: ab, pid: null }); });
+    G.picks = G.picks.filter(function (k) { return k.yr !== yr; });
+    addPickYear(G, yr + 3);
+    G.draft = { order: order, cur: 0, year: yr };
+    addNews(G, 'The ' + (G.season + 1) + ' NFL Draft is here. The ' + G.teams[order[0].ab].name + ' are on the clock with the #1 pick.', 'big');
   };
   function rookieDeal(o) { if (o.r === 1) return Math.round((11500 - (o.n - 1) * 260) / 50) * 50; if (o.r === 2) return Math.round((2300 - o.n * 15) / 50) * 50; return 1150 + Math.max(0, 4 - o.r) * 150; }
   E.rookieDeal = rookieDeal;
@@ -1149,11 +1165,12 @@ var HC = (function () {
   };
 
   // ---------- New season ----------
-  E.expiring = function (G, ab) { return teamPlayers(G, ab).filter(function (p) { return p.yrs <= 1; }); };
+  E.expiring = function (G, ab) { return teamPlayers(G, ab).filter(function (p) { return p.yrs <= 1 && !p.fresh; }); };
   E.newSeason = function (G) {
     var me = G.user.ab, retired = [], left = [], id;
     G.history.push({ season: G.season, rec: rec(G.teams[me]), champ: G.playoffs && G.playoffs.champ, elim: G.playoffs ? (G.playoffs.elim[me] || 0) : 0, chem: Math.round(G.teams[me].chem) });
-    G.season++; G.cap = Math.round(G.cap * 1.06 / 100) * 100;
+    if (G.capRaised !== G.season) G.cap = Math.round(G.cap * 1.06 / 100) * 100;
+    G.season++; G.fa = null; G.user.offers = [];
     for (id in G.players) {
       var p = G.players[id];
       if (p.tm === 'DRAFT') { delete G.players[id]; continue; }
@@ -1214,6 +1231,300 @@ var HC = (function () {
   E.leaders = function (G, key, n, filter) {
     var a = []; for (var id in G.players) { var p = G.players[id]; if (p.st && p.st[key] && (!filter || filter(p))) a.push(p); }
     return a.sort(function (x, y) { return y.st[key] - x.st[key]; }).slice(0, n || 10);
+  };
+  // ---------- Draft picks ----------
+  function nextDraftYear(G) { return (G.phase === 'draft' || G.phase === 'offseason') ? G.season + 2 : G.season + 1; }
+  function addPickYear(G, yr) {
+    if (G.picks.some(function (k) { return k.yr === yr; })) return;
+    for (var r = 1; r <= 7; r++) G.order.forEach(function (ab) { G.picks.push({ id: yr + '-' + r + '-' + ab, yr: yr, r: r, orig: ab, own: ab }); });
+  }
+  function ensurePicks(G) {
+    if (!G.picks) { G.picks = []; var y0 = nextDraftYear(G); for (var y = y0; y < y0 + 3; y++) addPickYear(G, y); }
+  }
+  E.ensurePicks = ensurePicks;
+  E.teamPicks = function (G, ab) { ensurePicks(G); return G.picks.filter(function (k) { return k.own === ab; }).sort(function (a, b) { return a.yr - b.yr || a.r - b.r; }); };
+  E.pickLabel = function (G, k) { return k.yr + ' Round ' + k.r + (k.own !== k.orig ? ' (from ' + k.orig + ')' : ''); };
+  // projected slot (1-32) by current/last record
+  function projSlot(G, ab) {
+    var arr = G.order.slice().sort(function (a, b) { return winPct(G.teams[a]) - winPct(G.teams[b]) || (G.teams[a].pf - G.teams[a].pa) - (G.teams[b].pf - G.teams[b].pa); });
+    var gp = G.teams[ab].w + G.teams[ab].l + G.teams[ab].t;
+    var s = arr.indexOf(ab) + 1;
+    return gp >= 3 ? s : Math.round((s + 16.5) / 2);
+  }
+  function pickValue(G, k) {
+    var near = k.yr === nextDraftYear(G), slot = near ? projSlot(G, k.orig) : 16.5;
+    var overall = (k.r - 1) * 32 + slot;
+    var v = 30000 * Math.exp(-(overall - 1) / 28) + 220;
+    return v * Math.pow(.85, Math.max(0, k.yr - nextDraftYear(G)));
+  }
+  E.pickValue = pickValue;
+
+  // ---------- Team direction & trade value ----------
+  E.direction = function (G, ab) {
+    var t = G.teams[ab], gp = t.w + t.l + t.t, o = E.teamOvr(G, ab).ovr;
+    var sc = o + (gp >= 4 ? (winPct(t) - .5) * 24 : 0);
+    return sc >= 80 ? 'contend' : sc <= 73.5 ? 'rebuild' : 'middle';
+  };
+  E.DIR_NAMES = { contend: 'Contender', middle: 'Middle of the pack', rebuild: 'Rebuilding' };
+  function playerValue(p) {
+    var mv = marketValue(p), v = mv + (mv - p.sal) * Math.min(Math.max(p.yrs, 1), 3) * .35;
+    if (p.age <= 25) v += Math.max(0, p.pot - p.ovr) * 260;
+    if (p.inj >= 3) v *= .8;
+    return v;
+  }
+  E.playerValue = playerValue;
+  function valueFor(G, ab, p, incoming, dir) {
+    var v = playerValue(p);
+    if (dir === 'contend') v *= p.age >= 27 ? 1.15 : .95; else if (dir === 'rebuild') v *= p.age <= 25 ? 1.2 : p.age >= 29 ? .7 : 1;
+    if (incoming) { var st = E.wouldStart(G, p, ab); v *= st ? 1.12 : .82; if (p.pers === 'CANCER') v *= .8; else if (p.pers === 'DIVA' || p.pers === 'HOT') v *= .92; else if (p.pers === 'LEADER') v *= 1.05; }
+    else v *= 1.08; // endowment: AI values what it already has a little more
+    return v;
+  }
+  function pickValueFor(G, k, dir) { var v = pickValue(G, k); return v * (dir === 'rebuild' ? 1.2 : dir === 'contend' ? .85 : 1); }
+  function tradeAllowed(G) {
+    if (G.phase === 'regular') return G.week <= TRADE_DEADLINE ? '' : 'The trade deadline (after Week ' + TRADE_DEADLINE + ') has passed. Trading reopens after the season.';
+    if (G.phase === 'playoffs') return 'No trades during the playoffs.';
+    if (G.phase === 'draft') return 'No trades while the draft is running.';
+    return '';
+  }
+  var TRADE_DEADLINE = 9; E.TRADE_DEADLINE = TRADE_DEADLINE;
+  E.tradeAllowed = tradeAllowed;
+  // offer: { a: team, b: team, aGive: {pl:[], pk:[]}, bGive: {pl:[], pk:[]} }
+  function capAfter(G, ab, outIds, inIds) {
+    var s = E.capUsed(G, ab); outIds.forEach(function (id) { s -= G.players[id].sal; }); inIds.forEach(function (id) { s += G.players[id].sal; });
+    return s;
+  }
+  E.capAfter = capAfter;
+  E.validateTrade = function (G, o) {
+    ensurePicks(G);
+    var why = tradeAllowed(G); if (why) return why;
+    if (o.a === o.b) return 'Pick another team.';
+    var A = o.aGive, B = o.bGive;
+    if (!A.pl.length && !A.pk.length) return 'Add something you are giving.';
+    if (!B.pl.length && !B.pk.length) return 'Add something you want back.';
+    var bad = A.pl.filter(function (id) { return !G.players[id] || G.players[id].tm !== o.a; }).concat(B.pl.filter(function (id) { return !G.players[id] || G.players[id].tm !== o.b; }));
+    if (bad.length) return 'One of those players is no longer on that roster.';
+    var pk = function (id) { for (var i = 0; i < G.picks.length; i++) if (G.picks[i].id === id) return G.picks[i]; return null; };
+    if (A.pk.some(function (id) { var k = pk(id); return !k || k.own !== o.a; }) || B.pk.some(function (id) { var k = pk(id); return !k || k.own !== o.b; })) return 'One of those picks has already moved.';
+    var lim = E.rosterLimit(G);
+    var na = teamPlayers(G, o.a).length - A.pl.length + B.pl.length, nb = teamPlayers(G, o.b).length - B.pl.length + A.pl.length;
+    if (na > lim + 3 || nb > lim + 3) return 'Too many incoming players for the roster limit (' + lim + ').';
+    var ca = capAfter(G, o.a, A.pl, B.pl), cb = capAfter(G, o.b, B.pl, A.pl);
+    if (ca > G.cap && ca > E.capUsed(G, o.a)) return 'The ' + G.teams[o.a].name + ' would be over the cap (' + fmtM(ca) + ' of ' + fmtM(G.cap) + ').';
+    if (cb > G.cap && cb > E.capUsed(G, o.b)) return 'The ' + G.teams[o.b].name + ' would be over the cap (' + fmtM(cb) + ' of ' + fmtM(G.cap) + ').';
+    return '';
+  };
+  function sideValue(G, ab, side, incoming, dir) {
+    var v = 0;
+    side.pl.forEach(function (id) { v += valueFor(G, ab, G.players[id], incoming, dir); });
+    side.pk.forEach(function (id) { var k = G.picks.filter(function (x) { return x.id === id; })[0]; if (k) v += pickValueFor(G, k, dir) * (incoming ? 1 : 1.05); });
+    return v;
+  }
+  // AI team `o.b` judges an offer from `o.a`
+  E.evalTrade = function (G, o) {
+    var dir = E.direction(G, o.b), vin = sideValue(G, o.b, o.aGive, true, dir), vout = sideValue(G, o.b, o.bGive, false, dir);
+    var cb = capAfter(G, o.b, o.bGive.pl, o.aGive.pl), room = G.cap - cb;
+    if (room < 1500 && cb > E.capUsed(G, o.b)) vin -= (1500 - room) * .6; // cap squeeze
+    return { vin: vin, vout: vout, ratio: vout > 0 ? vin / vout : 9, dir: dir };
+  };
+  E.proposeTrade = function (G, o) {
+    var err = E.validateTrade(G, o); if (err) return { ok: false, msg: err };
+    var ev = E.evalTrade(G, o), T = G.teams[o.b];
+    if (ev.ratio >= 1.04) { execTrade(G, o); return { ok: true, msg: 'Trade accepted! The ' + T.name + ' agree to the deal.' }; }
+    if (ev.ratio >= .72) {
+      // counter: ask for the cheapest extra asset of ours that closes the gap
+      var need = ev.vout * 1.06 - ev.vin, cand = [];
+      teamPlayers(G, o.a).forEach(function (p) { if (o.aGive.pl.indexOf(p.id) < 0) cand.push({ t: 'pl', id: p.id, v: valueFor(G, o.b, p, true, ev.dir), n: p.pos + ' ' + p.fn + ' ' + p.ln }); });
+      E.teamPicks(G, o.a).forEach(function (k) { if (o.aGive.pk.indexOf(k.id) < 0) cand.push({ t: 'pk', id: k.id, v: pickValueFor(G, k, ev.dir), n: E.pickLabel(G, k) + ' pick' }); });
+      cand = cand.filter(function (c) { return c.v >= need; }).sort(function (a, b) { return a.v - b.v; });
+      for (var i = 0; i < cand.length && i < 6; i++) {
+        var c = cand[i], co = JSON.parse(JSON.stringify(o)); co.aGive[c.t].push(c.id);
+        if (!E.validateTrade(G, co)) return { ok: false, counter: co, msg: 'The ' + T.name + ' are close. They would do it if you add ' + c.n + '.' };
+      }
+      return { ok: false, msg: 'The ' + T.name + ' say it is close, but they need more value coming back.' };
+    }
+    return { ok: false, msg: 'The ' + T.name + ' turn it down flat. ' + (ev.dir === 'rebuild' ? 'They are rebuilding and want young players and picks.' : ev.dir === 'contend' ? 'They are contending and want players who help now.' : 'Not nearly enough value.') };
+  };
+  function execTrade(G, o, silent) {
+    var me = G.user && G.user.ab;
+    function move(side, from, to) {
+      side.pl.forEach(function (id) {
+        var p = G.players[id]; p.tm = to; p.fresh = p.fresh || 0; p.tradeReq = 0; p.block = 0; p.wantsSnaps = 0;
+        p.mor = clamp(55 + (E.wouldStart(G, p, to) ? 10 : 0) + (p.pers === 'TEAM' || p.pers === 'PRO' ? 5 : 0), 0, 100);
+        if (G.user) { G.user.plan && (G.user.plan.fp = G.user.plan.fp.filter(function (x) { return x !== id; })); }
+        if (to === me) { p.dh = [Math.round(wovr(p) * 10) / 10]; }
+      });
+      side.pk.forEach(function (id) { G.picks.forEach(function (k) { if (k.id === id) k.own = to; }); });
+    }
+    move(o.aGive, o.a, o.b); move(o.bGive, o.b, o.a);
+    // chemistry & culture fallout
+    [[o.a, o.aGive, o.bGive], [o.b, o.bGive, o.aGive]].forEach(function (x) {
+      var ab = x[0], t = G.teams[ab], outP = x[1].pl.map(function (id) { return G.players[id]; }), inP = x[2].pl.map(function (id) { return G.players[id]; });
+      outP.forEach(function (p) {
+        if (p.ovr >= 78) t.chem = clamp(t.chem - 1, 5, 99);
+        if (p.pers === 'LEADER' || p.ldr >= 82) { t.chem = clamp(t.chem - 2, 5, 99); if (ab === me) { G.user.unity = clamp(G.user.unity - 3, 0, 100); teamPlayers(G, me).forEach(function (q) { q.mor = clamp(q.mor - 1.5, 0, 100); }); } }
+        if (p.pers === 'CANCER' || (E.isAttitude(p) && p.mor < 45)) { t.chem = clamp(t.chem + 2, 5, 99); if (ab === me) G.user.unity = clamp(G.user.unity + 2, 0, 100); }
+      });
+      inP.forEach(function (p) { if (p.pers === 'CANCER') t.chem = clamp(t.chem - 2.5, 5, 99); if (p.pers === 'LEADER' && ab === me) G.user.unity = clamp(G.user.unity + 2, 0, 100); });
+      syncDepth(G, ab); if (ab !== me) autoDepth(G, ab);
+      var lim = E.rosterLimit(G); if (teamPlayers(G, ab).length > lim) cutTo(G, ab, lim, ab === me);
+    });
+    if (!silent || o.a === me || o.b === me) {
+      var desc = function (side) { return side.pl.map(function (id) { var p = G.players[id]; return p.pos + ' ' + p.fn + ' ' + p.ln; }).concat(side.pk.map(function (id) { var k = G.picks.filter(function (z) { return z.id === id; })[0]; return k ? k.yr + ' R' + k.r + ' pick' : 'a pick'; })).join(', '); };
+      addNews(G, 'TRADE: The ' + G.teams[o.a].name + ' send ' + desc(o.aGive) + ' to the ' + G.teams[o.b].name + ' for ' + desc(o.bGive) + '.', (o.a === me || o.b === me) ? 'big' : 'deal');
+    }
+    (G.tradeLog = G.tradeLog || []).unshift({ s: G.season, ph: G.phase, w: G.week, a: o.a, b: o.b, ag: o.aGive, bg: o.bGive });
+    if (G.tradeLog.length > 60) G.tradeLog.length = 60;
+  }
+  E.execTrade = execTrade;
+  // build an offer from AI team `ab` for `target` player (owned by `other`), using its own picks / young players
+  function buildOffer(G, ab, p) {
+    var dir = E.direction(G, ab), want = valueFor(G, ab, p, true, dir) * rf(.9, 1.05), give = { pl: [], pk: [] }, got = 0;
+    var assets = E.teamPicks(G, ab).map(function (k) { return { t: 'pk', id: k.id, v: pickValueFor(G, k, dir) }; })
+      .concat(teamPlayers(G, ab).filter(function (q) { return q.pos !== p.pos && !E.wouldStart(G, q, ab) && q.ovr >= 55; }).map(function (q) { return { t: 'pl', id: q.id, v: valueFor(G, ab, q, false, dir) }; }));
+    assets.sort(function (a, b) { return b.v - a.v; });
+    var guard = 0;
+    while (got < want * .97 && guard++ < 6) {
+      var rem = want - got, pickA = null;
+      for (var i = assets.length - 1; i >= 0; i--) if (assets[i].v >= rem * .6 && give[assets[i].t].indexOf(assets[i].id) < 0) { pickA = assets[i]; break; }
+      if (!pickA) pickA = assets.filter(function (a) { return give[a.t].indexOf(a.id) < 0; })[0];
+      if (!pickA) break;
+      give[pickA.t].push(pickA.id); got += pickA.v;
+    }
+    if (got < want * .85) return null;
+    return { a: ab, b: p.tm, aGive: give, bGive: { pl: [p.id], pk: [] } };
+  }
+  function weeklyTrades(G) {
+    if (tradeAllowed(G)) return;
+    ensurePicks(G);
+    var me = G.user.ab;
+    // AI offers for players on your trade block
+    G.user.offers = (G.user.offers || []).filter(function (x) { return x.exp >= G.week && !E.validateTrade(G, x.o); });
+    var block = teamPlayers(G, me).filter(function (p) { return p.block || p.tradeReq; });
+    block.forEach(function (p) {
+      if (rnd() > .45) return;
+      var teams = G.order.filter(function (ab) { return ab !== me && E.wouldStart(G, p, ab); }); if (!teams.length) return;
+      var ab = pick(teams), o = buildOffer(G, ab, p);
+      if (o && !E.validateTrade(G, o) && G.user.offers.length < 6) { G.user.offers.push({ id: 'of' + G.season + G.week + p.id + ab, o: o, exp: G.week + 1 }); addNews(G, 'Trade offer: the ' + G.teams[ab].name + ' made an offer for ' + p.pos + ' ' + p.fn + ' ' + p.ln + '. See Trades.', 'deal'); }
+    });
+    // AI-to-AI trades: contenders buy veterans from rebuilders
+    if (rnd() < .3) {
+      var dirs = {}; G.order.forEach(function (ab) { if (ab !== me) dirs[ab] = E.direction(G, ab); });
+      var buyers = G.order.filter(function (ab) { return dirs[ab] === 'contend'; }), sellers = G.order.filter(function (ab) { return dirs[ab] === 'rebuild'; });
+      if (buyers.length && sellers.length) {
+        var bu = pick(buyers), se = pick(sellers);
+        var tgt = teamPlayers(G, se).filter(function (p) { return p.age >= 27 && p.ovr >= 74 && E.wouldStart(G, p, bu); }).sort(function (a, b) { return b.ovr - a.ovr; })[0];
+        if (tgt) { var o2 = buildOffer(G, bu, tgt); if (o2 && !E.validateTrade(G, o2) && E.evalTrade(G, o2).ratio >= .98) execTrade(G, o2, true); }
+      }
+    }
+  }
+  E.weeklyTrades = weeklyTrades;
+  E.respondOffer = function (G, id, accept) {
+    var i = (G.user.offers || []).findIndex(function (x) { return x.id === id; }); if (i < 0) return 'Offer expired.';
+    var x = G.user.offers[i]; G.user.offers.splice(i, 1);
+    if (!accept) return 'Offer declined.';
+    var err = E.validateTrade(G, x.o); if (err) return err;
+    execTrade(G, x.o); return 'Trade complete!';
+  };
+  // personality-driven trade requests
+  function tradeRequests(G) {
+    var me = G.user.ab;
+    teamPlayers(G, me).forEach(function (p) {
+      if (p.tradeReq) return;
+      var th = p.pers === 'DIVA' || p.pers === 'CANCER' ? 38 : p.pers === 'HOT' || p.pers === 'COMP' ? 30 : 22;
+      if (p.pers === 'TEAM' || p.pers === 'PRO') th = 12;
+      if (p.mor < th && p.ovr >= 65 && rnd() < .25) { p.tradeReq = 1; addNews(G, 'TRADE REQUEST: ' + p.pos + ' ' + p.fn + ' ' + p.ln + ' (' + (PERS[p.pers] ? PERS[p.pers].n : '') + ') has asked to be traded.', 'loss'); }
+    });
+  }
+  E.tradeRequests = tradeRequests;
+
+  // ---------- Free agency period (offseason, before the draft) ----------
+  var FA_DAYS = 5; E.FA_DAYS = FA_DAYS;
+  E.startFA = function (G) {
+    ensurePicks(G);
+    var me = G.user.ab, left = [], kept = 0;
+    if (G.capRaised !== G.season) { G.cap = Math.round(G.cap * 1.06 / 100) * 100; G.capRaised = G.season; }
+    for (var id in G.players) {
+      var p = G.players[id];
+      if (p.tm === 'FA' || p.tm === 'DRAFT' || p.fresh || p.yrs > 1) continue;
+      if (p.tm !== me && p.ovr >= 66 && rnd() < (p.ovr >= 80 ? .75 : .55) && E.capSpace(G, p.tm) > marketValue(p) + 6000) { p.sal = marketValue(p); p.yrs = ri(1, 4); p.fresh = 1; kept++; continue; }
+      p.lastTm = p.tm; if (p.tm === me) left.push(p);
+      p.tm = 'FA'; p.sal = 0; p.yrs = 0; p.tradeReq = 0; p.block = 0;
+    }
+    G.order.forEach(function (ab) { syncDepth(G, ab); });
+    if (G.user.plan) G.user.plan.fp = G.user.plan.fp.filter(function (x) { return G.players[x] && G.players[x].tm === me; });
+    G.phase = 'freeagency'; G.fa = { day: 1, days: FA_DAYS, offers: {}, mine: {}, results: [] };
+    G.user.offers = [];
+    addNews(G, 'FREE AGENCY OPENS: ' + faList(G).filter(function (p) { return p.ovr >= 70; }).length + ' players rated 70+ hit the market. The ' + (G.season + 1) + ' salary cap is ' + fmtM(G.cap) + '.', 'big');
+    if (left.length) addNews(G, 'Your expiring contracts are now free agents: ' + left.sort(function (a, b) { return b.ovr - a.ovr; }).slice(0, 6).map(function (p) { return p.ln; }).join(', ') + (left.length > 6 ? ' +' + (left.length - 6) : '') + '. They give you a loyalty edge if you bid.');
+  };
+  function needAt(G, ab, pos) {
+    var n = LINEUP[pos] || 1, ps = teamPlayers(G, ab).filter(function (p) { return p.pos === pos; }).sort(function (a, b) { return b.ovr - a.ovr; });
+    var weakest = ps.length >= n ? ps[n - 1].ovr : 40;
+    return { weakest: weakest, count: ps.length };
+  }
+  function faUtility(G, p, of) {
+    var ask = E.askFor(G, p, of.ab).sal, t = G.teams[of.ab], money = of.sal / Math.max(1, ask), wp = winPct(t);
+    var W = { m: 1, w: .35, c: .2, s: .25 };
+    if (p.pers === 'DIVA') { W.m = 1.5; W.w = .15; } else if (p.pers === 'COMP' || p.pers === 'LEADER') { W.w = .6; } else if (p.pers === 'TEAM') { W.m = .8; W.w = .5; W.c = .35; } else if (p.pers === 'PRO') { W.c = .4; }
+    if (p.age >= 31) W.w += .25;
+    var u = money * W.m + wp * W.w + (t.chem / 100) * W.c + (E.wouldStart(G, p, of.ab) ? W.s : 0) + (p.lastTm === of.ab ? .15 : 0) + (of.yrs >= E.askFor(G, p, of.ab).yrs ? .04 : -.03 * Math.abs(of.yrs - E.askFor(G, p, of.ab).yrs));
+    return { u: u, money: money };
+  }
+  E.faUtility = faUtility;
+  E.faOffersFor = function (G, pid) { return (G.fa && G.fa.offers[pid]) || []; };
+  E.faBid = function (G, p, sal, yrs) {
+    var me = G.user.ab, ask = E.askFor(G, p, me);
+    if (teamPlayers(G, me).length >= E.rosterLimit(G)) return { ok: false, msg: 'Your roster is full.' };
+    var committed = 0; for (var k in G.fa.mine) if (k !== p.id) committed += G.fa.mine[k].sal;
+    if (sal > E.capSpace(G, me) - committed) return { ok: false, msg: 'Not enough cap space (counting your other pending offers: ' + fmtM(committed) + ').' };
+    if (sal < ask.sal * .8) return { ok: false, msg: p.ln + "'s agent won't even take that to his client.", counter: ask.sal, cyrs: ask.yrs };
+    if (sal >= ask.sal * 1.12 && ask.interest >= 45 && G.fa.day >= 2 - (p.ovr < 72 ? 1 : 0)) { delete G.fa.mine[p.id]; sign(G, p, me, sal, yrs); return { ok: true, msg: p.fn + ' ' + p.ln + ' signs on the spot! ' + fmtM(sal) + '/yr for ' + yrs + ' yrs.' }; }
+    G.fa.mine[p.id] = { ab: me, sal: sal, yrs: yrs };
+    return { ok: false, pending: true, msg: 'Offer submitted: ' + fmtM(sal) + '/yr × ' + yrs + '. He will decide at the end of Day ' + G.fa.day + '. (Pay 12%+ over his ask to sign him on the spot.)' };
+  };
+  E.advanceFA = function (G) {
+    if (G.phase !== 'freeagency') return;
+    var F = G.fa, me = G.user.ab, last = F.day >= F.days, fas = faList(G).filter(function (p) { return p.ovr >= 52; }).slice(0, 260);
+    var offers = {};
+    for (var pid in F.mine) if (G.players[pid] && G.players[pid].tm === 'FA') offers[pid] = [F.mine[pid]];
+    // AI bidding by need and cap room (reserve room for rookies)
+    G.order.forEach(function (ab) {
+      if (ab === me) return;
+      var room = E.capSpace(G, ab) - 9000, n = teamPlayers(G, ab).length, made = 0, dir = E.direction(G, ab);
+      if (room < 1500 || n >= 86) return;
+      var cands = fas.map(function (p) {
+        var nd = needAt(G, ab, p.pos), gain = p.ovr - nd.weakest + (nd.count < (ROSTER_MIN[p.pos] || 1) ? 6 : 0);
+        if (dir === 'rebuild' && p.age >= 30) gain -= 6; if (dir === 'contend' && p.age >= 27) gain += 2;
+        return { p: p, g: gain + gauss() * 2.5 };
+      }).filter(function (c) { return c.g > 1; }).sort(function (a, b) { return b.g - a.g; });
+      for (var i = 0; i < cands.length && made < 3; i++) {
+        var p = cands[i].p, a = E.askFor(G, p, ab), sal = Math.round(a.sal * rf(.9, 1.12) * (1 + Math.min(.1, cands[i].g / 100)) / 50) * 50;
+        if (sal > room) continue;
+        (offers[p.id] = offers[p.id] || []).push({ ab: ab, sal: sal, yrs: a.yrs }); room -= sal; made++;
+      }
+    });
+    F.offers = offers; F.results = [];
+    // decisions
+    Object.keys(offers).forEach(function (pid) {
+      var p = G.players[pid]; if (!p || p.tm !== 'FA') return;
+      var best = null, bu = -1;
+      offers[pid].forEach(function (of) { var r = faUtility(G, p, of); if (r.u > bu) { bu = r.u; best = of; best._m = r.money; } });
+      var prob = last ? 1 : best._m >= 1 ? .35 + .15 * F.day : .1 * F.day;
+      if (offers[pid].length >= 3) prob += .15;
+      var mine = F.mine[pid];
+      if (rnd() < prob && E.capSpace(G, best.ab) >= best.sal && teamPlayers(G, best.ab).length < E.rosterLimit(G)) {
+        sign(G, p, best.ab, best.sal, best.yrs);
+        if (mine) { F.results.push({ id: pid, ok: best.ab === me, to: best.ab, sal: best.sal, yrs: best.yrs, n: offers[pid].length }); delete F.mine[pid]; }
+      } else if (mine) F.results.push({ id: pid, wait: 1, n: offers[pid].length });
+    });
+    if (last) { F.mine = {}; addNews(G, 'Free agency winds down. Remaining free agents can still be signed at any time.'); G.fa.done = 1; E.startDraft(G); return; }
+    F.day++;
+  };
+  E.migrateTrades = function (G) {
+    ensurePicks(G);
+    if (!G.user.offers) G.user.offers = [];
+    if (G.phase === 'freeagency' && !G.fa) G.fa = { day: 1, days: FA_DAYS, offers: {}, mine: {}, results: [] };
   };
   return E;
 })();

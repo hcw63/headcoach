@@ -23,7 +23,7 @@ const { chromium } = require('playwright-core');
   await p.waitForTimeout(500);
   await p.evaluate(() => document.querySelectorAll('#ov').forEach(o => o.remove()));
   await p.screenshot({ path: 'shot_dashboard.png', fullPage: false });
-  for (const s of ['roster', 'depth', 'cap', 'fa', 'practice', 'locker', 'draft', 'sched', 'stand', 'leaders', 'saves', 'about']) {
+  for (const s of ['roster', 'depth', 'cap', 'fa', 'trade', 'practice', 'locker', 'draft', 'sched', 'stand', 'leaders', 'saves', 'about']) {
     await p.click(`[data-act=nav][data-arg=${s}]`); await p.waitForTimeout(150);
   }
   await p.click('[data-act=nav][data-arg=roster]'); await p.waitForTimeout(200);
@@ -77,6 +77,18 @@ const { chromium } = require('playwright-core');
     return G.phase + ' champ ' + (G.playoffs && G.playoffs.champ);
   });
   console.log(r2);
+  // free agency period via the UI: bid on two players each day, then end the day
+  const rfa = await p.evaluate(() => {
+    const G = UI.state().G; const out = []; let g = 0;
+    UI.go('fa');
+    while (G.phase === 'freeagency' && g++ < 10) {
+      document.querySelectorAll('#ov').forEach(o => o.remove());
+      HC.faList(G).filter(x => x.ovr >= 70).slice(0, 2).forEach(pl => { UI.act('negotiate', pl.id); UI.act('negask'); document.querySelectorAll('#ov').forEach(o => o.remove()); });
+      UI.act('faday');
+    }
+    return 'after FA: ' + G.phase + ' roster ' + HC.teamPlayers(G, G.user.ab).length;
+  });
+  console.log(rfa);
   await p.evaluate(() => { document.querySelectorAll('#ov').forEach(o => o.remove()); UI.go('dash'); });
   await p.waitForTimeout(300);
   // scout a couple and draft

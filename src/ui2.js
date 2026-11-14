@@ -25,6 +25,7 @@
     if (G.phase === 'playoffs') return vPlayoffs();
     if (G.phase === 'draft') return vDraft();
     if (G.phase === 'offseason') return vOffseason();
+    if (G.phase === 'freeagency') return VIEWS.fa();
     var me = G.user.ab, T = G.teams[me], g = HC.userGame(G), h = '<div class="grid" style="grid-template-columns:1.5fr 1fr">';
     h += '<div class="col">';
     if (g && g.hs === null) h += matchupCard(g, 'Week ' + G.week + ' Matchup');
@@ -70,7 +71,7 @@
   var GROUPS = { ALL: null, OFF: HC.OFF, DEF: HC.DEF, ST: { K: 1, P: 1, LS: 1 } };
   function filterPos(p, f) { if (f === 'ALL') return true; if (GROUPS[f]) return !!GROUPS[f][p.pos]; return p.pos === f; }
   function sortList(list, key) {
-    var s = S.sort, get = { ovr: function (p) { return p.ovr; }, pot: function (p) { return p.pot; }, age: function (p) { return p.age; }, sal: function (p) { return p.sal; }, yrs: function (p) { return p.yrs; }, mor: function (p) { return p.mor; }, name: function (p) { return p.ln; }, pos: function (p) { return HC.POS_ORDER.indexOf(p.pos) * 100 - p.ovr; }, ask: function (p) { return p._ask || 0; }, prog: function (p) { return p.prog || 0; }, eth: function (p) { return p.eth || 0; }, ldr: function (p) { return p.ldr || 0; }, clu: function (p) { return p.clu || 0; }, pers: function (p) { return Object.keys(HC.PERS).indexOf(p.pers); } }[s.k] || function (p) { return p.ovr; };
+    var s = S.sort, get = { ovr: function (p) { return p.ovr; }, pot: function (p) { return p.pot; }, age: function (p) { return p.age; }, sal: function (p) { return p.sal; }, yrs: function (p) { return p.yrs; }, mor: function (p) { return p.mor; }, name: function (p) { return p.ln; }, pos: function (p) { return HC.POS_ORDER.indexOf(p.pos) * 100 - p.ovr; }, ask: function (p) { return p._ask || 0; }, int: function (p) { return p._int || 0; }, prog: function (p) { return p.prog || 0; }, eth: function (p) { return p.eth || 0; }, ldr: function (p) { return p.ldr || 0; }, clu: function (p) { return p.clu || 0; }, pers: function (p) { return Object.keys(HC.PERS).indexOf(p.pers); } }[s.k] || function (p) { return p.ovr; };
     return list.sort(function (a, b) { var x = get(a), y = get(b); return (x > y ? 1 : x < y ? -1 : 0) * s.d; });
   }
   function th(k, label) { return '<th data-act="sort" data-arg="' + k + '">' + label + (S.sort.k === k ? (S.sort.d < 0 ? ' ▼' : ' ▲') : '') + '</th>'; }
@@ -80,7 +81,7 @@
   }
   function cval(v) { if (v == null) return '<span class="dim">—</span>'; return '<b style="color:' + (v >= 80 ? '#86efac' : v >= 60 ? '#e8eef8' : v >= 45 ? '#fde68a' : '#fca5a5') + '">' + v + '</b>'; }
   function starterSet(ab) { var L = HC.lineup(G, ab), s = {}; for (var k in L) L[k].forEach(function (p) { s[p.id] = 1; }); return s; }
-  function status(p) { var s = []; if (p.inj) s.push('<span class="tag" style="background:#4a1d24;color:#fecaca">INJ ' + p.inj + 'w</span>'); if (p.rookie || p.exp === 0) s.push('<span class="tag" style="background:#1d3a2a;color:#bbf7d0">ROOKIE</span>'); if (p.yrs === 1) s.push('<span class="tag" style="background:#3a2f12;color:#fde68a">CONTRACT YR</span>'); if (p.wantsSnaps) s.push('<span class="tag">WANTS SNAPS</span>'); if (!p.real) s.push('<span class="tag" title="Generated player">GEN</span>'); return s.join(' '); }
+  function status(p) { var s = []; if (p.inj) s.push('<span class="tag" style="background:#4a1d24;color:#fecaca">INJ ' + p.inj + 'w</span>'); if (p.rookie || p.exp === 0) s.push('<span class="tag" style="background:#1d3a2a;color:#bbf7d0">ROOKIE</span>'); if (p.yrs === 1) s.push('<span class="tag" style="background:#3a2f12;color:#fde68a">CONTRACT YR</span>'); if (p.wantsSnaps) s.push('<span class="tag">WANTS SNAPS</span>'); if (p.tradeReq) s.push('<span class="tag" style="background:#4a1d24;color:#fecaca">WANTS TRADE</span>'); if (p.block) s.push('<span class="tag" style="background:#3a2f12;color:#fde68a">ON BLOCK</span>'); if (!p.real) s.push('<span class="tag" title="Generated player">GEN</span>'); return s.join(' '); }
   VIEWS.roster = function () {
     var me = G.user.ab, st = starterSet(me); HC.teamPlayers(G, me).forEach(function (p) { HC.ensureP(G, p); });
     var cf = S.charFilter || 'ANY', list = sortList(HC.teamPlayers(G, me).filter(function (p) { return filterPos(p, S.rosterFilter) && (cf === 'ANY' || HC.charTags(p).indexOf(cf) >= 0); }));
@@ -138,6 +139,7 @@
     if (mine) {
       h += '<button class="btn" data-act="negotiate" data-arg="' + p.id + '">✍️ Extend / Re-sign</button><button class="btn danger" data-act="release" data-arg="' + p.id + '">Release (dead cap ' + fmtM(HC.deadCap(p)) + ')</button>';
       h += '<button class="btn" data-act="promote" data-arg="' + p.id + '">⬆ Make starter</button>';
+      h += '<button class="btn" data-act="tblock" data-arg="' + p.id + '">' + (p.block ? '📢 On trade block' : '📢 Trade block') + '</button>';
       var isF = G.user.plan && G.user.plan.fp.indexOf(p.id) >= 0;
       h += '<button class="btn' + (isF ? ' pri' : '') + '" data-act="pfocus" data-arg="' + p.id + '">' + (isF ? '⭐ Focus player' : '☆ Make focus player') + '</button>';
     } else if (p.tm === 'FA') h += '<button class="btn pri" data-act="negotiate" data-arg="' + p.id + '">✍️ Negotiate Contract</button>';

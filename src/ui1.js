@@ -105,7 +105,7 @@ var UI = (function () {
   // ---------- shell ----------
   var NAV = [
     ['sec', 'Week'], ['dash', '🏟️', 'Dashboard'], ['practice', '🏋️', 'Practice'], ['locker', '🤝', 'Locker Room'],
-    ['sec', 'Team'], ['roster', '📋', 'Roster'], ['depth', '🧩', 'Depth Chart'], ['cap', '💰', 'Contracts & Cap'], ['fa', '✍️', 'Free Agency'],
+    ['sec', 'Team'], ['roster', '📋', 'Roster'], ['depth', '🧩', 'Depth Chart'], ['cap', '💰', 'Contracts & Cap'], ['fa', '✍️', 'Free Agency'], ['trade', '🔁', 'Trades'],
     ['sec', 'Front Office'], ['draft', '🎯', 'Scouting & Draft'],
     ['sec', 'League'], ['sched', '📅', 'Schedule'], ['stand', '🏆', 'Standings'], ['leaders', '📈', 'League Leaders'],
     ['sec', 'Career'], ['saves', '💾', 'Save / Load'], ['about', 'ℹ️', 'About']
@@ -114,6 +114,7 @@ var UI = (function () {
     if (G.phase === 'regular') return G.season + ' Regular Season · Week ' + G.week;
     if (G.phase === 'playoffs') return G.season + ' Playoffs · ' + HC.roundName(G.playoffs.round);
     if (G.phase === 'draft') return G.draft.year + ' NFL Draft · Round ' + G.draft.order[Math.min(G.draft.cur, G.draft.order.length - 1)].r;
+    if (G.phase === 'freeagency' && G.fa) return (G.season + 1) + ' Free Agency · Day ' + G.fa.day + ' of ' + G.fa.days;
     return G.season + ' Offseason';
   }
   function shell(content) {

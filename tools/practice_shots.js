@@ -75,6 +75,41 @@ const fs = require('fs');
   await p.tap('[data-act=cfilter][data-arg=Attitude]'); await p.waitForTimeout(300);
   await p.tap('th[data-act=sort][data-arg=clu]'); await p.waitForTimeout(300);
   await p.screenshot({ path: D + 'roster_attitude_filter.png' });
+  // trade screen: build an offer with the Chiefs
+  await p.tap('[data-act=nav][data-arg=trade]'); await p.waitForTimeout(300);
+  await p.tap('[data-act=tteam][data-arg=KC]'); await p.waitForTimeout(300);
+  const ids = await p.evaluate(() => { const G = UI.state().G; const kc = HC.teamPlayers(G, 'KC').filter(x => x.age >= 27 && x.ovr >= 76 && x.ovr <= 84).sort((a, b) => b.ovr - a.ovr)[0]; const my = HC.teamPicks(G, G.user.ab).find(k => k.r === 2); const mp = HC.teamPlayers(G, G.user.ab).filter(x => x.pos === kc.pos).sort((a, b) => a.ovr - b.ovr)[0]; return { r: 'r:pl:' + kc.id, g: 'g:pk:' + my.id, gp: mp ? 'g:pl:' + mp.id : null }; });
+  await p.tap('[data-act=tadd][data-arg="' + ids.r + '"]'); await p.waitForTimeout(200);
+  await p.tap('[data-act=tadd][data-arg="' + ids.g + '"]'); await p.waitForTimeout(200);
+  if (ids.gp) { await p.tap('[data-act=tadd][data-arg="' + ids.gp + '"]'); await p.waitForTimeout(200); }
+  await p.tap('[data-act=tprop]'); await p.waitForTimeout(400);
+  await p.evaluate(() => { document.querySelectorAll('.toast').forEach(t => t.remove()); window.scrollTo(0, 0); });
+  await p.screenshot({ path: D + 'trade_screen.png' });
+  console.log('trade result:', await p.evaluate(() => UI.state().S.tr.msg));
+  // trade block & offers tab (put two players on the block, sim a week to draw offers)
+  await p.evaluate(() => { const G = UI.state().G; HC.teamPlayers(G, G.user.ab).sort((a, b) => a.mor - b.mor).slice(0, 2).forEach(x => x.block = 1); for (let i = 0; i < 2 && !(G.user.offers || []).length; i++) { G.user.pendingEvent = null; const g = HC.userGame(G); if (g && g.hs === null) { const gs = HC.quickSim(G, g.h, g.a); HC.recordUserGame(G, gs); } G.user.pressPending = null; HC.advanceWeek(G); } document.querySelectorAll('#ov').forEach(o => o.remove()); UI.go('trade'); UI.act('ttab', 'block'); });
+  await p.waitForTimeout(400); await p.evaluate(() => { document.querySelectorAll('#ov,.toast').forEach(o => o.remove()); window.scrollTo(0, 0); });
+  await p.screenshot({ path: D + 'trade_block_offers.png' });
+  // sim to free agency
+  const fainfo = await p.evaluate(() => {
+    const G = UI.state().G; let g = 0;
+    while (G.phase === 'regular' && g++ < 30) { G.user.pendingEvent = null; const ug = HC.userGame(G); if (ug && ug.hs === null) { const gs = HC.quickSim(G, ug.h, ug.a); HC.recordUserGame(G, gs); } G.user.pressPending = null; HC.advanceWeek(G); }
+    g = 0; while (G.phase === 'playoffs' && g++ < 10) { const ug = HC.userGame(G); if (ug && ug.hs === null) { const gs = HC.quickSim(G, ug.h, ug.a, true, ug.neutral); HC.recordUserGame(G, gs); } G.user.pressPending = null; HC.advancePlayoffs(G); }
+    HC.faList(G).filter(x => x.ovr >= 72).slice(0, 3).forEach(x => { const a = HC.askFor(G, x, G.user.ab); HC.offer(G, x, G.user.ab, a.sal, a.yrs); });
+    HC.advanceFA(G);
+    HC.faList(G).filter(x => x.ovr >= 70).slice(0, 2).forEach(x => { const a = HC.askFor(G, x, G.user.ab); HC.offer(G, x, G.user.ab, Math.round(a.sal * 1.05 / 50) * 50, a.yrs); });
+    document.querySelectorAll('#ov').forEach(o => o.remove()); UI.go('fa');
+    return G.phase + ' day ' + (G.fa && G.fa.day);
+  });
+  console.log('FA state:', fainfo);
+  await p.waitForTimeout(500); await p.evaluate(() => { document.querySelectorAll('#ov,.toast').forEach(o => o.remove()); window.scrollTo(0, 0); });
+  await p.screenshot({ path: D + 'free_agency.png' });
+  await p.evaluate(() => window.scrollTo(0, 700)); await p.waitForTimeout(200);
+  await p.screenshot({ path: D + 'free_agency_list.png' });
+  await p.evaluate(() => { const G = UI.state().G; UI.act('negotiate', HC.faList(G).filter(x => x.ovr >= 70)[3].id); });
+  await p.waitForTimeout(400);
+  await p.screenshot({ path: D + 'free_agency_offer.png' });
+  await p.evaluate(() => document.querySelectorAll('#ov').forEach(o => o.remove()));
   // check crunch-time / flag text exists somewhere in a simulated game log
   const pbp = await p.evaluate(() => { const G = UI.state().G; let hero = 0, flag = 0, rat = 0; for (let i = 0; i < 12; i++) { const gs = HC.newGame(G, 'KC', 'BUF', { playoff: true }); HC.simToEnd(G, gs); gs.log.forEach(l => { if (/crunch time|big moment|ice cold/.test(l.t)) hero++; if (/FLAG/.test(l.t)) flag++; if (/rattled/.test(l.t)) rat++; }); } return { hero, flag, rat }; });
   console.log('12 sim games: clutch callouts', pbp.hero, 'attitude flags', pbp.flag, 'rattled', pbp.rat);

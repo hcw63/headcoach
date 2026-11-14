@@ -73,6 +73,23 @@
     ptab: function (t) { S.pracTab = t; render(); },
     pprog: function (k) { S.progFilter = k; render(); },
     cfilter: function (k) { S.charFilter = k; render(); },
+    fashow: function (k) { S.faShow = k; render(); },
+    famin: function (k) { S.faMin = +k; render(); },
+    faday: function () { var d = G.fa.day; HC.advanceFA(G); save(true); if (G.phase === 'draft') { toast('Free agency is over. The Draft is on!', 3500); go('dash'); } else { var r = (G.fa.results || []), w = r.filter(function (x) { return x.ok; }).length; toast('Day ' + d + ' complete' + (r.length ? ': ' + w + ' of your targets signed with you' : '') + '.', 3500); render(); } },
+    ttab: function (t) { trS().tab = t; render(); },
+    tteam: function (ab) { var T = trS(); T.team = ab; T.get = { pl: [], pk: [] }; T.msg = ''; T.counter = null; T.pf = 'ALL'; render(); },
+    tpf: function (v) { trS().pf = v; render(); },
+    tadd: function (a) { var x = a.split(':'), T = trS(), d = x[0] === 'g' ? T.give : T.get, id = x.slice(2).join(':'), arr = d[x[1]], i = arr.indexOf(id); if (i >= 0) arr.splice(i, 1); else arr.push(id); T.msg = ''; T.counter = null; render(); },
+    tclear: function () { var T = trS(); T.give = { pl: [], pk: [] }; T.get = { pl: [], pk: [] }; T.msg = ''; T.counter = null; render(); },
+    tprop: function () {
+      var T = trS(), o = { a: G.user.ab, b: T.team, aGive: T.give, bGive: T.get }, r = HC.proposeTrade(G, o);
+      T.msg = r.msg; T.ok = r.ok; T.counter = r.counter || null;
+      if (r.ok) { T.give = { pl: [], pk: [] }; T.get = { pl: [], pk: [] }; save(true); toast('🔁 ' + esc(r.msg), 3500); }
+      render();
+    },
+    tcounter: function () { var T = trS(); if (!T.counter) return; var r = HC.proposeTrade(G, T.counter); T.msg = r.msg; T.ok = r.ok; T.counter = r.counter || null; if (r.ok) { T.give = { pl: [], pk: [] }; T.get = { pl: [], pk: [] }; save(true); toast('🔁 ' + esc(r.msg), 3500); } render(); },
+    tblock: function (id) { var p = G.players[id]; if (!p || p.tm !== G.user.ab) return; p.block = p.block ? 0 : 1; if (p.block && p.tradeReq) p.mor = Math.min(100, p.mor + 4); save(true); toast(p.block ? '📢 ' + esc(p.ln) + ' is on the trade block' : esc(p.ln) + ' is off the block'); if ($('#ov')) openPlayer(id); else render(); },
+    toffer: function (a) { var x = a.split(':'); var m = HC.respondOffer(G, x[0], x[1] === '1'); toast(esc(m), 3000); save(true); render(); },
     scout: function (id) { var p = G.players[id], err = HC.scout(G, p); if (err) toast(err); var open = !!$('#ov'); if (open) openPlayer(id); else render(); },
     dpick: function (id) { if (HC.draftPlayer(G, id)) { var p = G.players[id]; closeOv(); toast('🎉 You drafted ' + p.pos + ' ' + esc(p.fn + ' ' + p.ln)); save(true); render(); } },
     dsim: function () { HC.simDraftToUser(G); save(true); render(); },
@@ -97,6 +114,7 @@
   function negSubmit() {
     var n = S.neg, p = G.players[n.id], r = HC.offer(G, p, G.user.ab, n.sal, n.yrs);
     if (r.ok) { closeOv(); toast('✍️ ' + esc(r.msg), 3500); S.neg = null; save(true); render(); return; }
+    if (r.pending) { closeOv(); toast('📨 ' + esc(r.msg), 4500); S.neg = null; save(true); render(); return; }
     if (r.counter) { n.sal = r.counter; n.yrs = r.cyrs || n.yrs; }
     openNeg(n.id, r.msg);
   }
